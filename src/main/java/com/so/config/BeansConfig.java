@@ -15,6 +15,7 @@ import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import org.springframework.web.socket.server.standard.ServerEndpointExporter;
 
 @Configuration
 public class BeansConfig {
@@ -40,5 +41,5 @@ public class BeansConfig {
 		sqlSessionFactoryBean.setConfigLocation(resolver.getResource("classpath:/dataAccessConfiguration.xml"));
 		return sqlSessionFactoryBean.getObject();
 	}
-	
+
 }

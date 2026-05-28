@@ -249,7 +249,11 @@ public class RemoteJarMgmtComponent extends CommonComponent {
 						Notification.show("服务已经停止，请注意查看日志", Notification.Type.WARNING_MESSAGE);
 					}
 				} catch (Exception e1) {
-					Notification.show("停止服务失败，请注意查看日志", Notification.Type.WARNING_MESSAGE);
+					if (e1.getMessage().contains("Connection")){
+						Notification.show("无法连接服务器，请使用客户端登录检查！", Notification.Type.WARNING_MESSAGE);
+					}else{
+						Notification.show("查看状态失败，请注意查看日志", Notification.Type.WARNING_MESSAGE);
+					}
 					e1.printStackTrace();
 				}
 			});
@@ -258,7 +262,6 @@ public class RemoteJarMgmtComponent extends CommonComponent {
 		grid.addComponentColumn(p -> {
 			Button b = ComponentFactory.getButtonWithColor("删除", ColorEnum.RED);
 			b.addClickListener(e -> {
-				try {
 					if (!LoginView.checkPermission(Constants.DELETE)){
 						Notification.show("权限不足，请联系管理员", Notification.Type.WARNING_MESSAGE);
 						return;
@@ -274,7 +277,6 @@ public class RemoteJarMgmtComponent extends CommonComponent {
 							projectsMapper.deleteByMap(map);
 							grid.setItems(projectsMapper.selectList(new QueryWrapper<ProjectList>()));
 						}
-
 						@Override
 						protected void rejected(ConfirmationEvent event) {
 							super.rejected(event);
@@ -282,10 +284,6 @@ public class RemoteJarMgmtComponent extends CommonComponent {
 						}
 					});
 					yesNo.showConfirmation();
-				} catch (Exception e1) {
-					Notification.show("停止服务失败，请注意查看日志", Notification.Type.WARNING_MESSAGE);
-					e1.printStackTrace();
-				}
 			});
 			return b;
 		}).setCaption("删除");

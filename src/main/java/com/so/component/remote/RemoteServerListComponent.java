@@ -7,6 +7,7 @@ import com.so.component.ComponentUtil;
 import com.so.component.RemoteSSHComponent;
 import com.so.component.util.FileUploader;
 import com.so.component.util.TabSheetUtil;
+import com.so.controller.SshHandler;
 import com.so.entity.ConnectionInfo;
 import com.so.mapper.ConnectionInfoMapper;
 import com.so.ui.ComponentFactory;
@@ -14,6 +15,7 @@ import com.so.ui.LoginView;
 import com.so.util.Constants;
 import com.so.util.SSHClientUtil;
 import com.so.util.Util;
+import com.vaadin.server.VaadinSession;
 import com.vaadin.ui.*;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.slf4j.Logger;
@@ -36,7 +38,7 @@ public class RemoteServerListComponent extends CommonComponent {
 
 	
 	private static final Logger log = LoggerFactory.getLogger(RemoteServerListComponent.class);
-
+	public static ConnectionInfo connectionInfo = null;
 	private static final long serialVersionUID = 8995914798319911923L;
 	private Panel mainPanel;
 	private VerticalLayout contentLayout;
@@ -191,8 +193,10 @@ public class RemoteServerListComponent extends CommonComponent {
 	 * @param data
 	 */
 	private void addRemoteSSHTab(ConnectionInfo data) {
+		connectionInfo = data;
+		RemoteSSHXterm bean = ComponentUtil.applicationContext.getBean(RemoteSSHXterm.class);
 //		RemoteSSHComponent bean = ComponentUtil.applicationContext.getBean(RemoteSSHComponent.class);
-		RemoteSSHComponentV2 bean = ComponentUtil.applicationContext.getBean(RemoteSSHComponentV2.class);
+//		RemoteSSHComponentV2 bean = ComponentUtil.applicationContext.getBean(RemoteSSHComponentV2.class);
 		bean.setAddr(data);
 		bean.setHostName(data.getIdHost());
 		bean.initLayout();

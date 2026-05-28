@@ -87,6 +87,19 @@ public class TabSheetUtil {
 		}		
 		return componet;
 	}
+	public static Component getComponentLike(String targetTab){
+		Component componet = null;
+		LogCheckView bean = ComponentUtil.applicationContext.getBean(LogCheckView.class);
+		Iterator<Component> tabComponents = bean.getMainTabsheet().iterator();
+		while (tabComponents.hasNext()) {
+			Component componetTemp = tabComponents.next();
+			if (bean.getMainTabsheet().getTab(componetTemp).getCaption().contains(targetTab)) {
+				componet = componetTemp;
+				return componet;
+			}
+		}
+		return componet;
+	}
 	
 	public static boolean checkComponent(String tabCaption){
 		LogCheckView bean = ComponentUtil.applicationContext.getBean(LogCheckView.class);

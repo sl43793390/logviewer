@@ -171,7 +171,7 @@ public class CommonProjecttMgmtLocal extends CommonComponent {
 					boolean falg = false;
 					String binPath = StrUtil.removeSuffix(p.getCdPath(), "/");
 					for (String res : executeNewFlow) {
-						if (res.contains(binPath)) {
+						if (res.contains(p.getCmdStatus())) {
 							b.setStyleName("projectlist-status-running-button");
 							b.setCaption("运行中");
 							Notification.show("服务运行中", Type.WARNING_MESSAGE);
