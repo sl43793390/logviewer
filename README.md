@@ -38,7 +38,7 @@ logviewer 是一个可以方便开发人员通过浏览器查看和下载远程�
 <img width="600px" height="400px" alt="login" src="images/local.png"/> 
 <img width="800px" height="400px" alt="login" src="images/loginserver.png"/> 
 <img width="600px" height="400px" alt="login" src="images/serverlist.png"/> 
-<img width="700px" height="500px" alt="login" src="images/applicationMgmt.png.png"/> 
+<img width="700px" height="500px" alt="login" src="images/applicationMgmt.png"/> 
 <img width="700px" height="500px" alt="login" src="images/fileMgmt.png"/> 
 
 - 我的博客地址：https://blog.csdn.net/sl4379
