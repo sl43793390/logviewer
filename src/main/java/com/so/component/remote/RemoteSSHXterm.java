@@ -85,8 +85,9 @@ public class RemoteSSHXterm extends CommonComponent {
 		frame.setSizeFull();
 		contentLayout.addComponent(frame);
 		contentLayout.addComponent(ComponentFactory.getStandardLabel(
-				"终端支持退格、上下键历史、Ctrl+C 等常用操作；粘贴用 Ctrl+V。该终端为行模式实现，"
-						+ "不建议运行 vim / top 等全屏程序，若无法退出关闭当前 tab 重开即可。"));
+				"终端为完整的 VT 实现，vim / top / tmux 等全屏程序可直接使用。"
+						+ "快捷键：Ctrl+F 搜索缓冲区，Ctrl+Shift+C 复制选中内容，Ctrl+Shift+V 粘贴；"
+						+ "工具栏可导出整个会话文本。若卡在全屏程序里无法退出，按 Esc 后输入 :q! 或 q 即可。"));
 		contentLayout.setExpandRatio(frame, 1.0f);
 	}
 

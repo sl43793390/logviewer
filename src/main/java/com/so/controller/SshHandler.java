@@ -24,10 +24,9 @@ import javax.websocket.server.ServerEndpoint;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.io.Reader;
 import java.net.URLDecoder;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
@@ -35,15 +34,18 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Web 终端（xterm）的 websocket 端点。
+ * Web 终端（xterm.js）的 websocket 端点。
  * <p>
- * 报文格式（服务端 -> 浏览器）统一是 JSON，便于把"数据"和"提示"分开，
- * 不会再像以前那样把 {@code dhhw>$} 这种假提示符直接塞进终端输出里：
+ * 服务端 -> 浏览器分两种帧：
  * <pre>
- * {"t":"data","v":"...终端输出..."}
- * {"t":"notice","lv":"info|err","v":"提示文字"}
+ * 二进制帧：远端 pty 的原始字节，浏览器侧直接交给 xterm.js 的 write(Uint8Array)
+ * 文本帧：  {"t":"notice","lv":"info|err","v":"提示文字"}  控制/提示消息
  * </pre>
- * 浏览器 -> 服务端：
+ * 终端数据不再套 JSON 文本：pty 输出本来就是字节流，套成字符串要在服务端先按 UTF-8
+ * 解码、到浏览器再编码回去，白跑两趟；而且一个多字节汉字被读取块切断时，
+ * 交给 xterm.js 的流式解码器比服务端自己拼更稳妥，它还要处理 ESC ( 0 这类字符集切换。
+ * <p>
+ * 浏览器 -> 服务端仍然统一是文本帧 JSON：
  * <pre>
  * {"data":"按键内容"}
  * {"resize":{"cols":120,"rows":30}}
@@ -249,14 +251,25 @@ public class SshHandler {
         }
     }
 
-    static void sendData(javax.websocket.Session session, String data) {
-        if (StrUtil.isEmpty(data)) {
+    /**
+     * 发送终端数据。走二进制帧，浏览器侧按 Uint8Array 直接写进 xterm.js。
+     * <p>
+     * buffer 是读线程复用的数组，这里用 getBasicRemote()（同步阻塞写），
+     * 方法返回时数据已经交给容器，所以调用方可以安全地接着复用它。
+     */
+    static void sendBinary(javax.websocket.Session session, byte[] buffer, int length) {
+        if (null == session || !session.isOpen() || length <= 0) {
             return;
         }
-        JSONObject payload = new JSONObject();
-        payload.put("t", "data");
-        payload.put("v", data);
-        send(session, payload);
+        ByteBuffer payload = ByteBuffer.wrap(buffer, 0, length);
+        // 读线程和 UI 线程（resize 提示）都会发消息，不同步会出现 IllegalStateException
+        synchronized (session) {
+            try {
+                session.getBasicRemote().sendBinary(payload);
+            } catch (Exception e) {
+                log.debug("发送终端数据失败：{}", e.getMessage());
+            }
+        }
     }
 
     static void sendNotice(javax.websocket.Session session, String level, String message) {
@@ -397,14 +410,13 @@ public class SshHandler {
 
         @Override
         public void run() {
-            // 用 Reader 而不是 new String(bytes, 0, len)：一个 UTF-8 汉字占 3 字节，
-            // 按字节块解码时正好被切断就会变成乱码（原来中文输出偶尔出现"锟斤拷"就是这个原因）
-            Reader reader = new InputStreamReader(inputStream, StandardCharsets.UTF_8);
-            char[] buffer = new char[4096];
+            // 原样转发字节，不在服务端解码：xterm.js 的解码器是流式的，
+            // 跨读取块被切断的 UTF-8 多字节序列由它拼接，比服务端先解码再编回字符串更准
+            byte[] buffer = new byte[8192];
             try {
                 int len;
-                while ((len = reader.read(buffer)) != -1) {
-                    sendData(session, new String(buffer, 0, len));
+                while ((len = inputStream.read(buffer)) != -1) {
+                    sendBinary(session, buffer, len);
                 }
             } catch (Exception e) {
                 if (openSession.isConnected()) {

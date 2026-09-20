@@ -38,7 +38,7 @@
 | 远程应用管理 | 远程日志搜索 | 输入密码或使用密钥登录任意服务器，搜索并下载日志 |
 | | 免登录服务器列表 | 管理远程连接，一键打开「应用管理」「SSH 终端」「文件管理」 |
 | | 远程应用管理 | 在远程机器上管理 jar / Tomcat / 通用项目（与本地同类功能一致） |
-| | Web SSH 终端 | 浏览器里直接开一个 shell（仅适合临时操作，见[常见问题](#常见问题)） |
+| | Web SSH 终端 | 基于 xterm.js 的完整终端，支持 vim / top / tmux、256 色、搜索与会话导出 |
 | 其他工具 | 加密工具 | 密码摘要等小工具 |
 | 用户管理 | 用户管理 | 新增 / 修改 / 删除用户，按 `ADD / UPDATE / DELETE / UPLOAD` 分配权限 |
 
@@ -54,6 +54,7 @@
 | JSch（mwiede 0.2.17） | — | SFTP 文件传输、远程命令执行 |
 | sshj | 0.31.0 | 远程文件管理 |
 | Hutool | 5.8.7 | 工具类 |
+| xterm.js | 6.0.0 | Web 终端的浏览器端实现，发行文件本地托管在 `src/main/webapp/VAADIN/xterm/`，不依赖 CDN |
 | fastjson2 / EasyExcel / BouncyCastle | — | JSON、Excel 导出、国密摘要 |
 | log4j2 | — | 日志（配置见 `log4j2.xml`） |
 
@@ -270,11 +271,37 @@ src/main/java/com/so
 
 ### Web 终端
 
-- 页面：`src/main/webapp/VAADIN/themes/mytheme/terminal.html`
+- 页面：`src/main/webapp/VAADIN/themes/mytheme/terminal.html`，由 `RemoteSSHXterm` 通过 `BrowserFrame`（iframe）嵌入。
+- 终端组件是 **xterm.js 6.0.0** 加插件，发行文件托管在 `src/main/webapp/VAADIN/xterm/`。本项目没有 npm / webpack，页面用 `<script>` 直接引 UMD 包；升级走 `scripts/fetch-xterm-assets.mjs`（加 `--latest` 自动解析最新版），版本号锁在脚本里的 `PINNED` 常量。**不要改成 CDN**：内网机房通常没有外网。
+- 已挂载插件：`fit`（自适应容器）、`search`（Ctrl+F 搜索）、`webgl`（GPU 渲染，失败自动退回 DOM 渲染）、`web-links`（日志里的 IP / URL 可点）、`serialize`（导出整个会话）、`unicode11`（宽字符与 emoji 宽度）、`clipboard`（OSC 52，仅 https 或 localhost 下生效，其余环境插件不加载）。
 - WebSocket 端点：`/ws/ssh`（`com.so.controller.SshHandler`），完整地址为 `ws://<ip>:9095/log/ws/ssh?token=xxx&cols=120&rows=30`
 - 连接信息不放静态字段，而是每次打开标签页生成一个带有效期的随机 token 登记到服务端，多人同时使用不会串台；token 在标签页存活期内可重复使用，「重新连接」按钮依赖这一点。
-- 页面内是一个行模式 VT100 模拟器（`terminal.html` 里的 `screen` 网格 + 光标），会解析 `BS / CR / LF / ESC[nA~D / ESC[K / ESC[J / ESC[H` 等序列，并按双宽字符计算汉字占位。服务端连接时按页面尺寸下发 `setPtySize`，窗口变化时通过 `{"resize":{...}}` 通知后端做 `window-change`。
-- 报文是 JSON：服务端下发 `{"t":"data"}`（终端数据）和 `{"t":"notice"}`（提示），浏览器上传 `{"data":...}`（按键）与 `{"resize":...}`。
+- **帧格式**（改协议时两边必须一起改）：
+  - 服务端到浏览器：**二进制帧**是远端 pty 的原始字节，页面直接 `term.write(new Uint8Array(...))`；**文本帧**是控制消息 `{"t":"notice","lv":"info|err","v":"..."}`。
+  - 浏览器到服务端：统一是文本帧 JSON，`{"data":"按键"}` 与 `{"resize":{"cols":120,"rows":30}}`。
+  - 终端数据不套 JSON 的原因：pty 输出本来就是字节流，套成字符串要在服务端先解码、到浏览器再编码回去，白跑两趟；直接转发原始字节则交给 xterm.js 的流式解码器，跨读取块被切断的多字节汉字不会变成乱码。
+- 快捷键：`Ctrl+F` 搜索缓冲区，`Ctrl+Shift+C` 复制选中内容，`Ctrl+Shift+V` 粘贴，回车 / Shift+回车 在搜索结果间跳转。
+- 本地验证渲染与协议：`node scripts/terminal-selftest.mjs` 会在 18080 端口起静态目录和一个最小 WebSocket 端点，用无头 Chrome 打开启动日志里的地址，即可看到颜色、中文对齐、跨块解码的自测输出。
+
+### 登录页
+
+登录页是「左侧品牌区 + 右侧登录卡片」的整屏分栏（`LoginView`），窄屏（≤1000px）自动收起左侧品牌区。
+
+- 样式在 `src/main/webapp/VAADIN/themes/mytheme/styles.css` 末尾的「登录页样式」段落，类名统一 `login-` 前缀；左侧品牌区、右侧卡片分别由 `LoginView#buildBrandPanel` / `buildLoginPanel` 构建。
+- `LoginView` 里左右分栏用的是 `CssLayout` 而不是 `HorizontalLayout`：`CssLayout` 不给子组件套 `v-slot`，可以直接用 flex 控制比例。
+- **改样式不要重跑 `vaadin:compile-theme`**：主题是按 jar 预编译的，`styles.css` 里已有一批手工覆盖规则，重新编译会全部冲掉。
+- 两处 Valo 的坑（改动时容易踩）：
+  - `.v-widget` 被设成 `display:inline-block`，所以卡片必须显式 `display:block` 才能用 `margin:0 auto` 居中；
+  - `.v-slot` 和 `.v-label-undef-w` 带 `white-space:nowrap`，说明文案不覆盖成 `normal` 就会冲出容器不换行。
+- 预览与校验（不需要起服务）：
+
+  ```bash
+  python scripts/build-login-preview.py     # 把主题样式内联进 docs/login-preview.html
+  python scripts/login-layout-check.py      # 无头 Chrome 量盒模型并断言（1440x900）
+  python scripts/login-layout-check.py 900 780
+  ```
+
+  预览稿 `docs/login-preview.html` 的 DOM 照抄 Vaadin 真实渲染结果，浏览器直接打开即可看效果；校验脚本会用无头 Chrome 真的排一次版，检查卡片居中、输入框宽度、文案换行、窄屏收起等。
 
 ## 常见问题
 
@@ -297,7 +324,10 @@ jar 包**同级目录**（也就是启动 jar 时的当前目录），不是 jar
 确认该目录对配置的登录用户有读权限；文件名后缀必须在 `fileSuffix.conf` 里，或勾选「包含模式」。
 
 **7. Web 终端里 vim、top 这类全屏程序显示不正常**
-终端是行模式实现，支持退格、上下键调历史、Ctrl+C、粘贴（Ctrl+V）、`Ctrl+Shift+C` 复制选中内容，但不支持全屏绘制和鼠标操作。需要长时间交互请用本地 SSH 客户端；终端里卡住时点「重新连接」或关闭当前标签页重开。
+
+先确认浏览器版本：xterm.js 只支持较新的 Chrome / Edge / Firefox / Safari。终端本身是完整的 VT 实现，vim、top、tmux、less 都能跑，配色方案里的 256 色与真彩色也支持。
+
+若终端完全不显示内容，按顺序查：浏览器的开发者工具 Console 有没有脚本报错、Network 里 `VAADIN/xterm/xterm.js` 是不是 404（部署时漏拷了 `VAADIN/xterm/` 目录）、WebSocket 有没有连上（工具栏状态栏会写明失败原因）。卡在全屏程序里出不来时，按 `Esc` 后输入 `:q!`（vim）或 `q`（top、less）即可。
 
 **8. 监控页、文件管理页提示连接失败**
 页面会直接显示失败原因。若配了私钥，会先试私钥、失败再回落密码，两条路都不通时会把两个原因都列出来。常见两类：
@@ -312,12 +342,14 @@ jar 包**同级目录**（也就是启动 jar 时的当前目录），不是 jar
 
 ## 截图
 
+<img width="900px" alt="登录页" src="images/login.png"/>
 <img width="800px" height="300px" alt="本地日志搜索" src="images/localsearch.png"/>
 <img width="600px" height="400px" alt="本地文件管理" src="images/local.png"/>
 <img width="800px" height="400px" alt="远程日志登录" src="images/loginserver.png"/>
 <img width="600px" height="400px" alt="免登录服务器列表" src="images/serverlist.png"/>
 <img width="700px" height="500px" alt="应用管理" src="images/applicationMgmt.png"/>
 <img width="700px" height="500px" alt="文件管理" src="images/fileMgmt.png"/>
+<img width="1000px" alt="Web SSH 终端" src="images/terminal.png"/>
 
 ## 后续计划
 
