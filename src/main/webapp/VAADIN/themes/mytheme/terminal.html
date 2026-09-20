@@ -1,0 +1,985 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>Web 终端</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            background: #1c1c1c;
+            overflow: hidden;
+            font-family: Consolas, Menlo, Monaco, "Courier New", monospace;
+            font-size: 13px;
+            line-height: 1.35;
+        }
+
+        #toolbar {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 26px;
+            line-height: 26px;
+            padding: 0 8px;
+            box-sizing: border-box;
+            background: #2b2b2b;
+            color: #cfcfcf;
+            font-size: 12px;
+            user-select: none;
+        }
+
+        #status.ok {
+            color: #7ec699;
+        }
+
+        #status.bad {
+            color: #ff6b6b;
+        }
+
+        #actions {
+            float: right;
+        }
+
+        #actions a {
+            color: #8ab4f8;
+            cursor: pointer;
+            margin-left: 14px;
+            text-decoration: none;
+        }
+
+        #actions a:hover {
+            text-decoration: underline;
+        }
+
+        #viewport {
+            position: absolute;
+            top: 26px;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            padding: 6px 8px;
+            box-sizing: border-box;
+            overflow: auto;
+            color: #e6e6e6;
+        }
+
+        #sb, #scr {
+            margin: 0;
+            padding: 0;
+            white-space: pre;
+            font: inherit;
+            color: inherit;
+        }
+
+        /* 光标 */
+        .cur {
+            background: #e6e6e6;
+            color: #1c1c1c;
+            animation: blink 1.1s step-end infinite;
+        }
+
+        @keyframes blink {
+            0%, 60% { background: #e6e6e6; }
+            61%, 100% { background: transparent; }
+        }
+
+        /* 量字符宽度的探针，不参与显示 */
+        #probe {
+            position: fixed;
+            left: -2000px;
+            top: 0;
+            visibility: hidden;
+            white-space: pre;
+            font: inherit;
+        }
+
+        /* 隐形的输入接收框：真正拿到键盘焦点的是它，
+           这样 Ctrl+V 才能触发浏览器的粘贴事件、输入法也能正常工作 */
+        #sink {
+            position: fixed;
+            left: -2000px;
+            top: 0;
+            width: 20px;
+            height: 20px;
+            opacity: 0;
+            border: 0;
+            padding: 0;
+            margin: 0;
+            resize: none;
+            outline: none;
+        }
+    </style>
+</head>
+<body>
+<div id="toolbar">
+    <span id="status">正在连接...</span>
+    <span id="actions">
+        <a id="clear" title="清空屏幕与历史">清屏</a>
+        <a id="reconnect" style="display:none" title="使用同一连接信息重新建立会话">重新连接</a>
+    </span>
+</div>
+
+<div id="viewport">
+    <pre id="sb"></pre>
+    <pre id="scr"></pre>
+</div>
+
+<span id="probe">MMMMMMMMMM</span>
+<textarea id="sink" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+
+<script>
+    (function () {
+        'use strict';
+
+        // ======================= 终端状态 =======================
+        // 这是一个行模式 VT100 模拟器：维护 行x列 的字符网格 + 光标位置，
+        // 而不是像原来那样把收到的字节直接往 <pre> 里追加。
+        // 原来退格删不掉、满屏乱码的根因就是：pty 回显的 BS(0x08)/SP/BS
+        // 和 CSI 序列在 <pre> 里只是普通字符，永远不会真的把字符擦掉。
+        var COLS = 80;
+        var ROWS = 24;
+        var screen = [];
+        var scrollback = [];
+        var MAX_SCROLLBACK = 5000;
+        var TRIM_TO = 3000;
+        var cx = 0;
+        var cy = 0;
+
+        var term = document.getElementById('scr');
+        var sbNode = document.getElementById('sb');
+        var viewport = document.getElementById('viewport');
+        var probe = document.getElementById('probe');
+        var sink = document.getElementById('sink');
+        var statusNode = document.getElementById('status');
+        var reconnectNode = document.getElementById('reconnect');
+
+        var socket = null;
+        var pendingEscape = '';
+        var sbAppended = 0;
+        var lastWasCR = false;
+        var autoScroll = true;
+        var renderScheduled = false;
+        var lastError = '';
+
+        function newRow() {
+            var row = new Array(COLS);
+            for (var i = 0; i < COLS; i++) {
+                row[i] = ' ';
+            }
+            return row;
+        }
+
+        function resetScreen() {
+            screen = [];
+            for (var i = 0; i < ROWS; i++) {
+                screen.push(newRow());
+            }
+            cx = 0;
+            cy = 0;
+            lastWasCR = false;
+        }
+
+        function rowString(row) {
+            return row.join('');
+        }
+
+        // ======================= 渲染 =======================
+        function esc(text) {
+            return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        function scheduleRender() {
+            if (renderScheduled) {
+                return;
+            }
+            renderScheduled = true;
+            window.requestAnimationFrame(render);
+        }
+
+        function appendScrollbackLine(line) {
+            scrollback.push(line);
+            if (scrollback.length > MAX_SCROLLBACK) {
+                scrollback.splice(0, scrollback.length - TRIM_TO);
+                sbNode.textContent = scrollback.join('\n');
+                sbAppended = scrollback.length;
+            } else {
+                var text = (sbAppended > 0 ? '\n' : '') + line;
+                sbNode.appendChild(document.createTextNode(text));
+                sbAppended++;
+            }
+        }
+
+        function scrollUp() {
+            appendScrollbackLine(rowString(screen[0]).replace(/\s+$/, ''));
+            screen.shift();
+            screen.push(newRow());
+        }
+
+        function render() {
+            renderScheduled = false;
+
+            var rows = screen.map(rowString);
+            // 光标偏移必须按"单元格实际字符数"累加：一个汉字占两个显示列、
+            // 但只存一个字符，直接按列号算会偏
+            var offset = 0;
+            for (var i = 0; i < cy; i++) {
+                offset += rows[i].length + 1;
+            }
+            for (var j = 0; j < cx; j++) {
+                offset += screen[cy][j].length;
+            }
+            var text = rows.join('\n');
+
+            var head = text.substring(0, offset);
+            var curChar = text.charAt(offset);
+            var tail = text.substring(offset + 1);
+
+            term.innerHTML = esc(head)
+                + '<span class="cur">' + (curChar && curChar !== '\n' ? esc(curChar) : ' ') + '</span>'
+                + esc(tail);
+
+            if (autoScroll) {
+                viewport.scrollTop = viewport.scrollHeight;
+            }
+        }
+
+        // ======================= 转义序列解析 =======================
+        function clamp(value, min, max) {
+            return value < min ? min : (value > max ? max : value);
+        }
+
+        // 行内如果留下"孤立的右半格"（宽字符的左半已被擦掉），补成空格，
+        // 否则整行的显示宽度会比别人少一格
+        function normalizeRow(row) {
+            for (var i = 1; i < COLS; i++) {
+                if (row[i] === '') {
+                    var lead = row[i - 1];
+                    var keep = lead.length === 1 && charWidth(lead.charCodeAt(0)) === 2;
+                    if (!keep) {
+                        row[i] = ' ';
+                    }
+                }
+            }
+        }
+
+        function eraseLine(mode) {
+            var row = screen[cy];
+            var i;
+            if (mode === 0) {
+                for (i = cx; i < COLS; i++) {
+                    row[i] = ' ';
+                }
+            } else if (mode === 1) {
+                for (i = 0; i <= cx && i < COLS; i++) {
+                    row[i] = ' ';
+                }
+            } else {
+                for (i = 0; i < COLS; i++) {
+                    row[i] = ' ';
+                }
+            }
+            normalizeRow(row);
+        }
+
+        function eraseDisplay(mode) {
+            var y;
+            if (mode === 0) {
+                eraseLine(0);
+                for (y = cy + 1; y < ROWS; y++) {
+                    screen[y] = newRow();
+                }
+            } else if (mode === 1) {
+                eraseLine(1);
+                for (y = 0; y < cy; y++) {
+                    screen[y] = newRow();
+                }
+            } else {
+                for (y = 0; y < ROWS; y++) {
+                    screen[y] = newRow();
+                }
+            }
+        }
+
+        function insertLines(count) {
+            for (var i = 0; i < count; i++) {
+                screen.splice(cy, 0, newRow());
+                screen.pop();
+            }
+        }
+
+        function deleteLines(count) {
+            for (var i = 0; i < count; i++) {
+                screen.splice(cy, 1);
+                screen.push(newRow());
+            }
+        }
+
+        function applyCsi(params, finalChar) {
+            var priv = '';
+            if (params.length && '?><='.indexOf(params.charAt(0)) >= 0) {
+                priv = params.charAt(0);
+                params = params.substring(1);
+            }
+            var args = params.length
+                ? params.split(';').map(function (x) { return x === '' ? 0 : parseInt(x, 10); })
+                : [];
+
+            function a(index, def) {
+                var v = args[index];
+                return (v === undefined || isNaN(v)) ? def : v;
+            }
+
+            var n;
+            switch (finalChar) {
+                case 'A':
+                    cy = Math.max(0, cy - Math.max(1, a(0, 1)));
+                    break;
+                case 'B':
+                    cy = Math.min(ROWS - 1, cy + Math.max(1, a(0, 1)));
+                    break;
+                case 'C':
+                    cx = Math.min(COLS - 1, cx + Math.max(1, a(0, 1)));
+                    break;
+                case 'D':
+                    cx = Math.max(0, cx - Math.max(1, a(0, 1)));
+                    break;
+                case 'E':
+                    cy = Math.min(ROWS - 1, cy + Math.max(1, a(0, 1)));
+                    cx = 0;
+                    break;
+                case 'F':
+                    cy = Math.max(0, cy - Math.max(1, a(0, 1)));
+                    cx = 0;
+                    break;
+                case 'G':
+                    cx = clamp(a(0, 1) - 1, 0, COLS - 1);
+                    break;
+                case 'd':
+                    cy = clamp(a(0, 1) - 1, 0, ROWS - 1);
+                    break;
+                case 'H':
+                case 'f':
+                    cy = clamp(a(0, 1) - 1, 0, ROWS - 1);
+                    cx = clamp(a(1, 1) - 1, 0, COLS - 1);
+                    break;
+                case 'J':
+                    eraseDisplay(a(0, 0));
+                    break;
+                case 'K':
+                    eraseLine(a(0, 0));
+                    break;
+                case 'L':
+                    insertLines(Math.max(1, a(0, 1)));
+                    break;
+                case 'M':
+                    deleteLines(Math.max(1, a(0, 1)));
+                    break;
+                case '@':
+                    n = Math.max(1, a(0, 1));
+                    for (var i = COLS - 1; i >= cx + n; i--) {
+                        screen[cy][i] = screen[cy][i - n];
+                    }
+                    for (var k = cx; k < Math.min(COLS, cx + n); k++) {
+                        screen[cy][k] = ' ';
+                    }
+                    break;
+                case 'P':
+                    n = Math.max(1, a(0, 1));
+                    for (var j = cx; j < COLS; j++) {
+                        screen[cy][j] = (j + n < COLS) ? screen[cy][j + n] : ' ';
+                    }
+                    break;
+                case 'X':
+                    n = Math.max(1, a(0, 1));
+                    for (var m = cx; m < Math.min(COLS, cx + n); m++) {
+                        screen[cy][m] = ' ';
+                    }
+                    break;
+                case 'n':
+                    // DSR：readline 会问"光标在哪"，不回它的话长命令行的换行会错乱
+                    if (a(0, 0) === 6) {
+                        send('\u001b[' + (cy + 1) + ';' + (cx + 1) + 'R');
+                    } else if (a(0, 0) === 5) {
+                        send('\u001b[0n');
+                    }
+                    break;
+                case 'c':
+                    // DA：设备属性，回一个"我是 VT100"
+                    send('\u001b[?1;2c');
+                    break;
+                default:
+                    // m(SGR 颜色)、h/l(模式)、r(滚动区) 等一律忽略：
+                    // 本终端不渲染颜色，忽略后至少不会把 \u001b[01;34m 当正文显示出来
+                    break;
+            }
+        }
+
+        // 返回消耗的字符数；-1 表示序列还没收全，留在缓冲区等下一个报文
+        function handleEscape(text, index) {
+            if (index + 1 >= text.length) {
+                return -1;
+            }
+            var c1 = text.charAt(index + 1);
+
+            if (c1 === '[') {
+                var j = index + 2;
+                while (j < text.length) {
+                    var code = text.charCodeAt(j);
+                    if (code >= 0x40 && code <= 0x7e) {
+                        break;
+                    }
+                    j++;
+                }
+                if (j >= text.length) {
+                    return -1;
+                }
+                applyCsi(text.substring(index + 2, j), text.charAt(j));
+                return j - index + 1;
+            }
+
+            if (c1 === ']' || c1 === 'P' || c1 === '^' || c1 === '_') {
+                // OSC / DCS / PM / APC：内容到 BEL 或 ST(ESC \) 为止
+                for (var k = index + 2; k < text.length; k++) {
+                    var cc = text.charCodeAt(k);
+                    if (cc === 0x07) {
+                        return k - index + 1;
+                    }
+                    if (cc === 0x1b) {
+                        if (k + 1 >= text.length) {
+                            return -1;
+                        }
+                        if (text.charAt(k + 1) === '\\') {
+                            return k - index + 2;
+                        }
+                    }
+                }
+                return -1;
+            }
+
+            if ('()*+#'.indexOf(c1) >= 0) {
+                return index + 2 >= text.length ? -1 : 3;
+            }
+
+            // ESC 7/8 存光标、ESC D/E/M 换行、ESC =/> 键盘模式等：两字符，忽略即可
+            return 2;
+        }
+
+        // 汉字/全角符号占两个显示列，不区分宽度的话输出对不齐，
+        // 后续的退格、重绘也会跟着错位
+        function charWidth(code) {
+            if (code >= 0x1100 && (
+                    code <= 0x115f
+                    || code === 0x2329 || code === 0x232a
+                    || (code >= 0x2e80 && code <= 0x303e)
+                    || (code >= 0x3041 && code <= 0x33ff)
+                    || (code >= 0x3400 && code <= 0x4dbf)
+                    || (code >= 0x4e00 && code <= 0x9fff)
+                    || (code >= 0xa000 && code <= 0xa4cf)
+                    || (code >= 0xac00 && code <= 0xd7a3)
+                    || (code >= 0xf900 && code <= 0xfaff)
+                    || (code >= 0xfe10 && code <= 0xfe19)
+                    || (code >= 0xfe30 && code <= 0xfe6f)
+                    || (code >= 0xff00 && code <= 0xff60)
+                    || (code >= 0xffe0 && code <= 0xffe6))) {
+                return 2;
+            }
+            return 1;
+        }
+
+        function putChar(ch, width) {
+            if (cx + width > COLS) {
+                cx = 0;
+                lineFeed();
+            }
+            if (cy >= ROWS) {
+                cy = ROWS - 1;
+            }
+            var row = screen[cy];
+            // 覆盖到宽字符的任意一半就把整个宽字符清掉：
+            // 否则擦一个汉字时会只剩半个字（pty 的退格是按字节回的，不认识宽字符）
+            var leadChar = row[cx];
+            if (cx + 1 < COLS && row[cx + 1] === '' && typeof leadChar === 'string'
+                    && leadChar.length === 1 && charWidth(leadChar.charCodeAt(0)) === 2) {
+                row[cx + 1] = ' ';
+            }
+            if (row[cx] === '' && cx > 0) {
+                row[cx - 1] = ' ';
+            }
+            // 宽字符的后半格存空串：整行 join 出来的显示宽度才是对的
+            row[cx] = ch;
+            if (width === 2 && cx + 1 < COLS) {
+                row[cx + 1] = '';
+            }
+            cx += width;
+        }
+
+        function lineFeed() {
+            cy++;
+            if (cy >= ROWS) {
+                scrollUp();
+                cy = ROWS - 1;
+            }
+        }
+
+        function applyText(data) {
+            pendingEscape += data;
+            var text = pendingEscape;
+            var i = 0;
+            while (i < text.length) {
+                var code = text.charCodeAt(i);
+
+                if (code === 0x1b) {
+                    var consumed = handleEscape(text, i);
+                    if (consumed < 0) {
+                        break;
+                    }
+                    i += consumed;
+                    continue;
+                }
+
+                i++;
+
+                if (code === 0x0d) {
+                    cx = 0;
+                    lastWasCR = true;
+                    continue;
+                }
+                if (code === 0x0a) {
+                    // 正常情况下 pty 发的是 CRLF；万一只发 LF，也把列号归零，
+                    // 否则输出会阶梯状右移
+                    if (!lastWasCR) {
+                        cx = 0;
+                    }
+                    lastWasCR = false;
+                    lineFeed();
+                    continue;
+                }
+                lastWasCR = false;
+
+                if (code === 0x08) {
+                    cx = Math.max(0, cx - 1);
+                    continue;
+                }
+                if (code === 0x09) {
+                    cx = Math.min(COLS - 1, (Math.floor(cx / 8) + 1) * 8);
+                    continue;
+                }
+                if (code === 0x07) {
+                    continue;
+                }
+                if (code < 0x20 || code === 0x7f) {
+                    // 其余控制字符直接吃掉，不能让它们出现在屏幕上
+                    continue;
+                }
+                // 代理对（emoji 等）算一个双宽字符
+                if (code >= 0xd800 && code <= 0xdbff && i < text.length) {
+                    var low = text.charCodeAt(i);
+                    if (low >= 0xdc00 && low <= 0xdfff) {
+                        putChar(text.substring(i - 1, i + 1), 2);
+                        i++;
+                        continue;
+                    }
+                }
+                putChar(text.charAt(i - 1), charWidth(code));
+            }
+            pendingEscape = text.substring(i);
+            scheduleRender();
+        }
+
+        // ======================= 尺寸 =======================
+        function computeSize() {
+            probe.textContent = 'MMMMMMMMMM';
+            var charWidth = probe.getBoundingClientRect().width / 10;
+            var lineHeight = parseFloat(window.getComputedStyle(term).lineHeight);
+            if (!charWidth || !lineHeight) {
+                return {cols: COLS, rows: ROWS};
+            }
+            var usableWidth = viewport.clientWidth - 16;
+            var usableHeight = viewport.clientHeight - 12;
+            return {
+                cols: clamp(Math.floor(usableWidth / charWidth), 20, 500),
+                rows: clamp(Math.floor(usableHeight / lineHeight), 5, 200)
+            };
+        }
+
+        function resizeGrid(newCols, newRows) {
+            if (newCols === COLS && newRows === ROWS) {
+                return;
+            }
+            for (var y = 0; y < screen.length; y++) {
+                var row = screen[y];
+                if (newCols < row.length) {
+                    row.length = newCols;
+                } else {
+                    while (row.length < newCols) {
+                        row.push(' ');
+                    }
+                }
+            }
+            COLS = newCols;
+            if (newRows < screen.length) {
+                screen.length = newRows;
+            } else {
+                while (screen.length < newRows) {
+                    screen.push(newRow());
+                }
+            }
+            ROWS = newRows;
+            cx = clamp(cx, 0, COLS - 1);
+            cy = clamp(cy, 0, ROWS - 1);
+            scheduleRender();
+        }
+
+        // ======================= websocket =======================
+        var size = computeSize();
+        resizeGrid(size.cols, size.rows);
+        resetScreen();
+
+        // 页面地址形如 /log/VAADIN/themes/mytheme/terminal.html?token=xxx，
+        // 需要还原出 /log/ws/ssh，并把 token 与终端尺寸带上。
+        function buildWsUrl() {
+            var path = window.location.pathname || '';
+            var idx = path.indexOf('/VAADIN/');
+            var contextPath = idx >= 0 ? path.substring(0, idx) : '';
+            var scheme = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+            var search = window.location.search || '';
+            var sep = search ? (search.charAt(0) === '?' ? '&' : '?') : '?';
+            return scheme + window.location.host + contextPath + '/ws/ssh'
+                + search + sep + 'cols=' + COLS + '&rows=' + ROWS;
+        }
+
+        function setStatus(text, ok) {
+            statusNode.textContent = text;
+            statusNode.className = ok === true ? 'ok' : (ok === false ? 'bad' : '');
+        }
+
+        function send(data) {
+            if (!data) {
+                return;
+            }
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({data: data}));
+            }
+        }
+
+        function connect() {
+            lastError = '';
+            reconnectNode.style.display = 'none';
+            setStatus('正在连接...');
+
+            var url = buildWsUrl();
+            try {
+                socket = new WebSocket(url);
+            } catch (e) {
+                setStatus('连接地址不合法：' + e.message, false);
+                reconnectNode.style.display = 'inline';
+                return;
+            }
+
+            socket.onopen = function () {
+                setStatus('已连接', true);
+                focusSink();
+            };
+
+            socket.onmessage = function (event) {
+                var text = typeof event.data === 'string' ? event.data : '';
+                if (!text) {
+                    return;
+                }
+                // 服务端只发 JSON；解析失败就当纯文本处理，保证兼容
+                if (text.charAt(0) === '{') {
+                    var msg;
+                    try {
+                        msg = JSON.parse(text);
+                    } catch (e) {
+                        msg = null;
+                    }
+                    if (msg && msg.t === 'data') {
+                        applyText(msg.v || '');
+                        return;
+                    }
+                    if (msg && msg.t === 'notice') {
+                        if (msg.lv === 'err') {
+                            lastError = msg.v || '';
+                            setStatus(lastError, false);
+                            reconnectNode.style.display = 'inline';
+                        } else {
+                            setStatus(msg.v || '', null);
+                        }
+                        return;
+                    }
+                }
+                applyText(text);
+            };
+
+            socket.onclose = function () {
+                setStatus(lastError || '连接已断开，可点击"重新连接"', false);
+                reconnectNode.style.display = 'inline';
+            };
+
+            socket.onerror = function () {
+                if (!lastError) {
+                    setStatus('连接出错', false);
+                }
+            };
+        }
+
+        // ======================= 输入 =======================
+        var SPECIAL_KEYS = {
+            'Enter': '\r',
+            'Backspace': '\u007f',
+            'Tab': '\t',
+            'Escape': '\u001b',
+            'Delete': '\u001b[3~',
+            'Insert': '\u001b[2~',
+            'Home': '\u001b[H',
+            'End': '\u001b[F',
+            'PageUp': '\u001b[5~',
+            'PageDown': '\u001b[6~',
+            'ArrowUp': '\u001b[A',
+            'ArrowDown': '\u001b[B',
+            'ArrowRight': '\u001b[C',
+            'ArrowLeft': '\u001b[D',
+            'F1': '\u001bOP',
+            'F2': '\u001bOQ',
+            'F3': '\u001bOR',
+            'F4': '\u001bOS',
+            'F5': '\u001b[15~',
+            'F6': '\u001b[17~',
+            'F7': '\u001b[18~',
+            'F8': '\u001b[19~',
+            'F9': '\u001b[20~',
+            'F10': '\u001b[21~',
+            'F11': '\u001b[23~',
+            'F12': '\u001b[24~'
+        };
+
+        function focusSink() {
+            try {
+                sink.focus({preventScroll: true});
+            } catch (e) {
+                sink.focus();
+            }
+        }
+
+        function copySelection() {
+            var selection = window.getSelection();
+            var text = selection ? selection.toString() : '';
+            if (!text) {
+                setStatus('没有选中内容', false);
+                return;
+            }
+            var holder = document.createElement('textarea');
+            holder.value = text;
+            holder.style.position = 'fixed';
+            holder.style.left = '-2000px';
+            document.body.appendChild(holder);
+            holder.select();
+            var ok = false;
+            try {
+                ok = document.execCommand('copy');
+            } catch (e) {
+                ok = false;
+            }
+            document.body.removeChild(holder);
+            setStatus(ok ? '已复制选中内容' : '复制失败，请用右键菜单复制', ok ? null : false);
+        }
+
+        // 键盘挂在整个 document 上，而不是隐藏输入框上：
+        // 用户拖选文字后焦点可能已经不在输入框上，这时照样要能继续敲命令
+        document.addEventListener('keydown', function (e) {
+            if (e.isComposing) {
+                return;
+            }
+            var key = e.key;
+
+            // Ctrl+Shift+C 复制选中内容（普通 Ctrl+C 留给终端发中断信号）
+            if ((e.ctrlKey || e.metaKey) && e.shiftKey && (key === 'c' || key === 'C')) {
+                e.preventDefault();
+                copySelection();
+                return;
+            }
+            // Ctrl+V 放行给浏览器，由下面的 paste 事件处理
+            if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (key === 'v' || key === 'V')) {
+                return;
+            }
+            // Ctrl+Shift+* 其余组合都放行给浏览器
+            if ((e.ctrlKey || e.metaKey) && e.shiftKey) {
+                return;
+            }
+            if (key === 'F11' || key === 'F12') {
+                return;
+            }
+            // Mac 的 Cmd 组合键
+            if (e.metaKey) {
+                return;
+            }
+
+            var payload = null;
+
+            if (e.ctrlKey && e.altKey) {
+                // AltGr 之类：不拦，交给 input 事件按普通字符发送
+                return;
+            } else if (e.ctrlKey) {
+                if (key === ' ' || key === '@') {
+                    payload = '\u0000';
+                } else if (key === '[') {
+                    payload = '\u001b';
+                } else if (key === '\\') {
+                    payload = '\u001c';
+                } else if (key === ']') {
+                    payload = '\u001d';
+                } else if (key === '^' || key === '6') {
+                    payload = '\u001e';
+                } else if (key === '_' || key === '7') {
+                    payload = '\u001f';
+                } else if (key === '8') {
+                    payload = '\u007f';
+                } else if (key.length === 1) {
+                    var code = key.toUpperCase().charCodeAt(0);
+                    if (code >= 64 && code <= 95) {
+                        payload = String.fromCharCode(code - 64);
+                    }
+                }
+            } else if (e.altKey && key.length === 1) {
+                // Alt 在终端里就是 ESC 前缀（bash 的 Meta 键）
+                payload = '\u001b' + key;
+            } else if (SPECIAL_KEYS[key] !== undefined) {
+                payload = SPECIAL_KEYS[key];
+            } else if (key.length === 1) {
+                payload = key;
+            } else {
+                return;
+            }
+
+            if (payload === null) {
+                return;
+            }
+            // 必须挡住默认行为：否则字符会同时进到隐藏输入框里，被 input 事件再发一遍
+            e.preventDefault();
+            send(payload);
+        });
+
+        // 兜底：输入法、死键、以及任何上面没拦到的字符
+        sink.addEventListener('input', function (e) {
+            if (e.isComposing) {
+                return;
+            }
+            if (sink.value) {
+                send(sink.value);
+                sink.value = '';
+            }
+        });
+
+        sink.addEventListener('compositionstart', function () {
+            // 输入法组字过程中不要拦截按键
+        });
+
+        // 粘贴同样挂在 document 上：焦点在 body 上时浏览器也会派发 paste 事件
+        document.addEventListener('paste', function (e) {
+            e.preventDefault();
+            var clipboard = e.clipboardData || window.clipboardData;
+            if (!clipboard) {
+                return;
+            }
+            var text = clipboard.getData('text');
+            if (!text) {
+                return;
+            }
+            // 终端里换行必须是 CR，粘多行命令才不会挤成一行
+            text = text.replace(/\r\n/g, '\r').replace(/\n/g, '\r');
+            if (text.length > 100000) {
+                text = text.substring(0, 100000);
+                setStatus('粘贴内容过长，已截断到 10 万字符', false);
+            }
+            send(text);
+        });
+
+        // 点任何位置都把焦点还给输入框，否则敲键盘没反应
+        viewport.addEventListener('mousedown', focusSink);
+        document.addEventListener('mouseup', function () {
+            if (!window.getSelection().toString()) {
+                focusSink();
+            }
+        });
+        sink.addEventListener('click', focusSink);
+
+        viewport.addEventListener('scroll', function () {
+            autoScroll = (viewport.scrollTop + viewport.clientHeight) >= (viewport.scrollHeight - 24);
+        });
+
+        reconnectNode.addEventListener('click', function () {
+            if (socket) {
+                try {
+                    socket.close();
+                } catch (e) {
+                    // ignore
+                }
+            }
+            var newSize = computeSize();
+            resizeGrid(newSize.cols, newSize.rows);
+            resetScreen();
+            render();
+            connect();
+        });
+
+        document.getElementById('clear').addEventListener('click', function () {
+            scrollback = [];
+            sbNode.textContent = '';
+            sbAppended = 0;
+            resetScreen();
+            render();
+            focusSink();
+        });
+
+        // 窗口尺寸变了：本地网格和远端 pty 一起调整，长输出才不会错行
+        var resizeTimer = null;
+        window.addEventListener('resize', function () {
+            if (resizeTimer) {
+                window.clearTimeout(resizeTimer);
+            }
+            resizeTimer = window.setTimeout(function () {
+                var newSize = computeSize();
+                if (newSize.cols === COLS && newSize.rows === ROWS) {
+                    scheduleRender();
+                    return;
+                }
+                resizeGrid(newSize.cols, newSize.rows);
+                if (socket && socket.readyState === WebSocket.OPEN) {
+                    socket.send(JSON.stringify({resize: {cols: COLS, rows: ROWS}}));
+                }
+            }, 250);
+        });
+
+        window.addEventListener('beforeunload', function () {
+            if (socket) {
+                try {
+                    socket.close();
+                } catch (e) {
+                    // ignore
+                }
+            }
+        });
+
+        render();
+        connect();
+
+        // 兜底：iframe 刚插入时可能还没量到真实尺寸，600ms 后校正一次，
+        // 避免终端按 20x5 这种极小尺寸去开 pty
+        window.setTimeout(function () {
+            var correct = computeSize();
+            if (correct.cols === COLS && correct.rows === ROWS) {
+                return;
+            }
+            resizeGrid(correct.cols, correct.rows);
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({resize: {cols: COLS, rows: ROWS}}));
+            }
+        }, 600);
+    })();
+</script>
+</body>
+</html>

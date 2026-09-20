@@ -2,7 +2,6 @@ package com.so.ui;
 
 import javax.sql.DataSource;
 
-import com.so.util.Constants;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,6 +12,7 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.so.component.ComponentUtil;
 import com.so.entity.User;
 import com.so.mapper.UserDao;
+import com.so.util.Constants;
 import com.so.util.Util;
 import com.vaadin.event.ShortcutAction.KeyCode;
 import com.vaadin.navigator.View;
@@ -20,13 +20,10 @@ import com.vaadin.navigator.ViewChangeListener.ViewChangeEvent;
 import com.vaadin.server.VaadinSession;
 import com.vaadin.spring.annotation.SpringView;
 import com.vaadin.spring.annotation.UIScope;
-import com.vaadin.ui.Alignment;
 import com.vaadin.ui.Button;
 import com.vaadin.ui.Button.ClickEvent;
-import com.vaadin.ui.FormLayout;
-import com.vaadin.ui.HorizontalLayout;
+import com.vaadin.ui.CssLayout;
 import com.vaadin.ui.Label;
-import com.vaadin.ui.Notification;
 import com.vaadin.ui.PasswordField;
 import com.vaadin.ui.TextField;
 import com.vaadin.ui.UI;
@@ -34,6 +31,17 @@ import com.vaadin.ui.VerticalLayout;
 
 import cn.hutool.core.util.StrUtil;
 
+/**
+ * 登录页。
+ * <p>
+ * 版式是「左侧品牌介绍 + 右侧登录卡片」的整屏分栏，对应的样式在主题文件
+ * {@code VAADIN/themes/mytheme/styles.css} 末尾的「登录页样式」段落里，
+ * 类名统一以 {@code login-} 开头，改样式时两边一起看。
+ * <p>
+ * 左右分栏用 {@link CssLayout} 承载而不是 HorizontalLayout：CssLayout 不会给
+ * 每个子组件再套一层 {@code v-slot} 容器，因此可以直接用 flex 控制宽度比例，
+ * 窄屏时也能干净地把左侧品牌区隐藏掉。
+ */
 @UIScope
 @SpringView(name = "loginView")
 public class LoginView extends VerticalLayout implements View {
@@ -45,101 +53,164 @@ public class LoginView extends VerticalLayout implements View {
 	private TextField userFld;
 	private PasswordField pwdFld;
 	private Button loginBtn;
+	/** 登录失败提示，常驻在表单里，不会被自动关闭的 Notification 顶掉 */
+	private Label errorLabel;
+
 	@Autowired
 	private UserDao userDao;
 
 	public LoginView() {
 		super();
-		addStyleName("login-new-general");
-		setSizeFull();
+		addStyleName("login-root");
+		// 这里不用 setSizeFull()：它会给根组件写死 height:100%，而导航容器 v-ui
+		// 本身高度是 auto，百分比算下来会塌成内容高度。整页高度统一交给样式表
+		// 里的 100vh 控制，窄屏、矮屏的表现也更好调。
+		setWidth("100%");
+		setSpacing(false);
+		setMargin(false);
 		initUi();
 	};
 
 	protected void initUi() {
 		removeAllComponents();
-		VerticalLayout contentLayout = new VerticalLayout();
-		contentLayout.addStyleName("logview-loginVayout");
-		contentLayout.setWidth("100%");
-		addComponent(contentLayout);
-		setComponentAlignment(contentLayout, Alignment.MIDDLE_CENTER);
-		initLayoutFirstPart(contentLayout);
-		initLayoutSecondPart(contentLayout);
-		initLayoutThirdPart(contentLayout);
+		CssLayout body = new CssLayout();
+		body.addStyleName("login-body");
+		addComponent(body);
+		body.addComponent(buildBrandPanel());
+		body.addComponent(buildLoginPanel());
 	}
 
-	private void initLayoutFirstPart(VerticalLayout contentLayout) {
-		HorizontalLayout firstLayout = new HorizontalLayout();
-		firstLayout.setWidth("100%");
-		firstLayout.setHeight("69px");
+	/**
+	 * 左侧品牌区：标题 + 功能点 + 版本信息
+	 */
+	private VerticalLayout buildBrandPanel() {
+		VerticalLayout brand = new VerticalLayout();
+		brand.addStyleName("login-brand");
+		brand.setSpacing(false);
+		brand.setMargin(false);
 
-		HorizontalLayout linkLayout = new HorizontalLayout();
-//		linkLayout.setWidth("558px");
-		linkLayout.setHeight("69px");
-		linkLayout.addStyleName("login-new-link");
-		firstLayout.addComponent(linkLayout);
-		firstLayout.setComponentAlignment(linkLayout, Alignment.MIDDLE_CENTER);
-//		Label blankLabel = new Label();
-//		linkLayout.addComponent(blankLabel);
-//		linkLayout.setExpandRatio(blankLabel, 1.0f);
-		linkLayout.setSpacing(true);
-		Label standardTitle = ComponentFactory.getStandardTitle("欢迎使用LogViewer");
-		standardTitle.addStyleName("login-title");
-		linkLayout.addComponent(standardTitle);
+		Label logo = new Label(">_");
+		logo.addStyleName("login-logo");
+		Label brandName = new Label("LogViewer");
+		brandName.addStyleName("login-brand-name");
+		Label brandSub = new Label("服务器日志与运维管理平台");
+		brandSub.addStyleName("login-brand-sub");
+		VerticalLayout nameBox = new VerticalLayout();
+		nameBox.setSpacing(false);
+		nameBox.setMargin(false);
+		nameBox.addComponents(brandName, brandSub);
 
-		contentLayout.addComponent(firstLayout);
+		// 用 CssLayout 而不是 HorizontalLayout 承载这一行：CssLayout 不会给子组件
+		// 套 v-slot，避免受 Valo 里 .v-slot 的 nowrap、v-align-* 对齐类影响，
+		// 垂直居中直接交给 CSS 的 flex 处理
+		CssLayout head = new CssLayout();
+		head.addStyleName("login-brand-head");
+		head.addComponents(logo, nameBox);
+		brand.addComponent(head);
+
+		Label title = new Label("远程日志查看，一处搞定");
+		title.addStyleName("login-brand-title");
+		brand.addComponent(title);
+
+		Label desc = new Label("多台服务器的日志、应用和进程集中管理，浏览器打开就能用，不用再逐台登录跳板机。");
+		desc.addStyleName("login-brand-desc");
+		brand.addComponent(desc);
+
+		VerticalLayout features = new VerticalLayout();
+		features.addStyleName("login-feature-list");
+		features.setSpacing(false);
+		features.setMargin(false);
+		addFeature(features, "本地与远程日志在线检索，大文件分页打开");
+		addFeature(features, "Jar、Tomcat、通用项目集中管理，一键启停");
+		addFeature(features, "Web SSH 终端与文件上传下载，免装客户端");
+		addFeature(features, "CPU、内存、磁盘使用率实时监控");
+		brand.addComponent(features);
+
+		Label foot = new Label("LogViewer v3.1.0 · Vaadin 8 + Spring Boot 2.7");
+		foot.addStyleName("login-brand-foot");
+		brand.addComponent(foot);
+		return brand;
 	}
 
-	private void initLayoutSecondPart(VerticalLayout contentLayout) {
-		VerticalLayout secondLayout = new VerticalLayout();
-		secondLayout.setWidth("100%");
-		secondLayout.addStyleName("login-new-general-content-container");
-		contentLayout.addComponent(secondLayout);
+	/**
+	 * 品牌区的一条功能点
+	 */
+	private void addFeature(VerticalLayout target, String text) {
+		Label dot = new Label("✓");
+		dot.addStyleName("login-feature-dot");
+		Label content = new Label(text);
+		content.addStyleName("login-feature-text");
 
-		initLayoutForm(secondLayout);
+		CssLayout row = new CssLayout();
+		row.addStyleName("login-feature-row");
+		row.addComponents(dot, content);
+		target.addComponent(row);
 	}
 
-	private void initLayoutForm(VerticalLayout secondLayout) {
-		VerticalLayout formContainerLayout = new VerticalLayout();
-		formContainerLayout.setWidth("320px");
-		secondLayout.addComponent(formContainerLayout);
-		secondLayout.setComponentAlignment(formContainerLayout, Alignment.MIDDLE_CENTER);
+	/**
+	 * 右侧登录区：居中的登录卡片
+	 */
+	private VerticalLayout buildLoginPanel() {
+		VerticalLayout panel = new VerticalLayout();
+		panel.addStyleName("login-panel");
+		panel.setSpacing(false);
+		panel.setMargin(false);
+
+		Label cardTitle = new Label("欢迎回来");
+		cardTitle.addStyleName("login-card-title");
+		Label cardSub = new Label("请使用系统分配的账号登录");
+		cardSub.addStyleName("login-card-sub");
+
+		errorLabel = new Label();
+		errorLabel.addStyleName("login-error");
+		errorLabel.setVisible(false);
 
 		userFld = ComponentFactory.getStandardTtextField("用户名");
-//		userFld = new TextField("用户名");
-		userFld.addStyleName("login-userfield");
-		userFld.setWidth("260px");
-		userFld.setHeight("35px");
+		userFld.addStyleName("login-field");
+		userFld.addStyleName("login-field-user");
+		userFld.setPlaceholder("请输入用户名");
+		userFld.setWidth("100%");
+		userFld.setHeight("44px");
 
-		// Create the password input field
 		pwdFld = ComponentFactory.getStandardPassedwordField("密码");
-//		pwdFld = new PasswordField("密码");
-		pwdFld.addStyleName("login-pwdfield");
-		pwdFld.setWidth("260px");
-		pwdFld.setHeight("35px");
+		pwdFld.addStyleName("login-field");
+		pwdFld.addStyleName("login-field-pwd");
+		pwdFld.setPlaceholder("请输入密码");
+		pwdFld.setWidth("100%");
+		pwdFld.setHeight("44px");
 		pwdFld.setValue("");
-		
 
-		// Create login button
 		loginBtn = new Button("登录");
-		loginBtn.setWidth("260px");
-		loginBtn.setHeight("35px");
+		loginBtn.addStyleName("login-submit");
+		loginBtn.setWidth("100%");
+		loginBtn.setHeight("46px");
 		loginBtn.setClickShortcut(KeyCode.ENTER, null);
 		loginBtn.addClickListener(new loginListener());
 
-		FormLayout fields = new FormLayout();
-		fields.addComponent(userFld);
-		fields.addComponent(pwdFld);
-		fields.addComponent(loginBtn);
-		fields.setWidth("320px");
-		formContainerLayout.addComponent(fields);
+		Label cardFoot = new Label("忘记密码请联系系统管理员");
+		cardFoot.addStyleName("login-card-foot");
+
+		VerticalLayout card = new VerticalLayout();
+		card.addStyleName("login-card");
+		card.setSpacing(false);
+		card.setMargin(false);
+		card.addComponents(cardTitle, cardSub, errorLabel, userFld, pwdFld, loginBtn, cardFoot);
+
+		panel.addComponent(card);
+		return panel;
 	}
 
-	private void initLayoutThirdPart(VerticalLayout contentLayout) {
-		HorizontalLayout thirdLayout = new HorizontalLayout();
-		thirdLayout.setWidth("100%");
-		thirdLayout.setHeight("69px");
-		thirdLayout.addStyleName("login-new-general-content-link");
-		contentLayout.addComponent(thirdLayout);
+	private void showError(String message) {
+		errorLabel.setValue(message);
+		errorLabel.setVisible(true);
+		userFld.addStyleName("login-field-error");
+		pwdFld.addStyleName("login-field-error");
+	}
+
+	private void hideError() {
+		errorLabel.setVisible(false);
+		userFld.removeStyleName("login-field-error");
+		pwdFld.removeStyleName("login-field-error");
 	}
 
 	protected void refreshUi() {
@@ -151,21 +222,32 @@ public class LoginView extends VerticalLayout implements View {
 
 		@Override
 		public void buttonClick(ClickEvent event) {
-			String userName = userFld.getValue();
+			// 从别处复制粘贴过来的账号常带首尾空格，这里统一去掉再比对
+			String userName = StrUtil.trim(userFld.getValue());
 			String pwd = pwdFld.getValue();
-			if (StrUtil.isBlank(userName) || StrUtil.isBlank(pwd)) {
-				Notification.show("用户名或密码不能为空", Notification.Type.WARNING_MESSAGE);
+			if (StrUtil.isBlank(userName)) {
+				showError("请输入用户名");
+				userFld.focus();
+				return;
+			}
+			if (StrUtil.isBlank(pwd)) {
+				showError("请输入密码");
+				pwdFld.focus();
 				return;
 			}
 			User user = userDao.selectById(userName);
 			if (null != user && null != user.getPassword()
 					&& user.getPassword().equals(Util.getSm3DigestStr(pwd))) {
+				hideError();
 				VaadinSession.getCurrent().setAttribute("userName", userName);
 				VaadinSession.getCurrent().setAttribute("user", user);
-				UI.getCurrent().getNavigator().navigateTo("logCheckView");
+				UI.getCurrent().getNavigator().navigateTo(MyUI.MAIN_VIEW);
 				logger.info("用户{}登录成功", userName);
 			} else {
-				Notification.show("用户名或密码错误", Notification.Type.WARNING_MESSAGE);
+				showError("用户名或密码错误，请重新输入");
+				pwdFld.setValue("");
+				pwdFld.focus();
+				logger.info("用户{}登录失败", userName);
 			}
 		}
 	}
@@ -175,6 +257,7 @@ public class LoginView extends VerticalLayout implements View {
 		// focus the username field when user arrives to the login view
 		userFld.setValue("");
 		pwdFld.setValue("");
+		hideError();
 		userFld.focus();
 		//添加初始化sql逻辑：如果第一次则全部执行，如果不是则跳过
 		DataSource dataSource = ComponentUtil.applicationContext.getBean(DataSource.class);

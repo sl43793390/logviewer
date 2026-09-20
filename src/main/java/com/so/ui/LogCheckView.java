@@ -94,8 +94,8 @@ public class LogCheckView extends VerticalLayout implements View {
 //		addSubMenu(cornItem,"CrontabComponent","定时任务配置");
 		addSubMenu(toolItem,"EncryptionComponent","加密工具");
 		if (ComponentUtil.getCurrentUser().getUserId().equals("admin")){
-//			addSubMenu(toolItem,"management.GridUseDemoTest","组件样式案例");
-//			addSubMenu(toolItem,"management.ChartsDemo","chart示例");
+			addSubMenu(toolItem,"management.GridUseDemoTest","组件样式案例");
+			addSubMenu(toolItem,"management.ChartsDemo","chart示例");
 		}
 		addSubMenu(userItem,"UserManagementComponent","用户管理");
 	}
