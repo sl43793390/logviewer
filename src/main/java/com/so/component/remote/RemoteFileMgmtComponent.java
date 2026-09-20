@@ -78,7 +78,25 @@ public class RemoteFileMgmtComponent extends CommonComponent {
         readyToConnect();
         initMainLayout();
 //        加载目录
-        initGridContent(null);
+        navigateTo(null);
+    }
+
+    /**
+     * 进入某个目录：统一维护「导航历史 + 路径显示 + 内容加载」。
+     * <p>
+     * 原来历史栈在 initGridContent 和点击事件里各 add 一次，每个目录入栈两遍，
+     * 「返回」会回到当前目录而不是上一级。
+     */
+    private void navigateTo(String path) {
+        String target = StrUtil.isBlank(path) ? resolveStartDir() : path;
+        initGridContent(target);
+        pathList.add(target);
+        pathLb.setValue(target);
+    }
+
+    /** 默认打开的目录：root 用户进 /root，其他进自己的家目录 */
+    private String resolveStartDir() {
+        return "root".equals(addr.getIdUser()) ? "/root" : "/home/" + addr.getIdUser();
     }
 
     private void initMainLayout() {
@@ -117,18 +135,14 @@ public class RemoteFileMgmtComponent extends CommonComponent {
         grid.setHeightFull();
         grid.setSelectionMode(Grid.SelectionMode.MULTI);
         grid.addComponentColumn(file -> {
-            if (!file.getIsFile()) {
+            if (!Boolean.TRUE.equals(file.getIsFile())) {
                 Button b = ComponentFactory.getLinkButton(file.getFileName());
-                b.addClickListener(e -> {
-                    initGridContent(file.getCurrentPath());
-                    pathList.add(file.getCurrentPath());
-                    pathLb.setValue(file.getCurrentPath());
-                });
+                // 历史栈由 navigateTo 统一维护，这里不要再 add，否则会重复入栈
+                b.addClickListener(e -> navigateTo(file.getCurrentPath()));
                 return b;
             }
             return ComponentFactory.getStandardLabel(file.getFileName());
         }).setCaption("名称");
-        grid.addColumn(RemoteFileInfo::getFileName).setCaption("名称");
         grid.addColumn(RemoteFileInfo::getPermission).setCaption("权限");
         grid.addColumn(RemoteFileInfo::getUserName).setCaption("用户");
         grid.addColumn(RemoteFileInfo::getSize).setCaption("大小");
@@ -146,7 +160,7 @@ public class RemoteFileMgmtComponent extends CommonComponent {
 //            return null;
 //        }).setCaption("打开");
         grid.addComponentColumn(file -> {
-            if (!file.getIsFile()) {
+            if (!Boolean.TRUE.equals(file.getIsFile())) {
                 RemoteFileUploaderForSshj loader = new RemoteFileUploaderForSshj();
                 loader.setChannelSftp(channelSftp);
                 loader.setParentPath(file.getCurrentPath());
@@ -166,7 +180,7 @@ public class RemoteFileMgmtComponent extends CommonComponent {
             return null;
         }).setCaption("上传");
         grid.addComponentColumn(file -> {
-            if (file.getIsFile()) {
+            if (Boolean.TRUE.equals(file.getIsFile())) {
                 Button b = ComponentFactory.getLinkButton("下载");
                 FileDownloader fileDownloader = new FileDownloader(new StreamResource(new FileStreamResource(file), file.getFileName()));
                 fileDownloader.extend(b);
@@ -184,7 +198,7 @@ public class RemoteFileMgmtComponent extends CommonComponent {
                             Notification.show("权限不足，请联系管理员", Notification.Type.WARNING_MESSAGE);
                             return;
                         }
-                        if (file.getIsFile()) {
+                        if (Boolean.TRUE.equals(file.getIsFile())) {
                             channelSftp.rm(file.getCurrentPath());
                         } else {
 //                            Notification.show("提示：", "为安全起见，暂不支持删除目录", Notification.Type.WARNING_MESSAGE);
@@ -207,35 +221,27 @@ public class RemoteFileMgmtComponent extends CommonComponent {
 
     private void initGridContent(String path) {
         //创建链接获取用户目录列表
-        String currentParentPath = null;
+        if (null == channelSftp) {
+            Notification.show("SFTP 连接未建立，请关闭该标签页后重试", Notification.Type.ERROR_MESSAGE);
+            return;
+        }
+        String target = StrUtil.isBlank(path) ? resolveStartDir() : path;
         try {
-            Vector<ChannelSftp.LsEntry> remoteResourceInfos = null;
-            if (null == path) {
-                pathList.add("/");
-                if ("root".equals(addr.getIdUser())) {
-                    remoteResourceInfos = channelSftp.ls("/root");
-                    pathList.add("/root");
-                    pathLb.setValue("/root");
+            Vector<ChannelSftp.LsEntry> remoteResourceInfos;
+            try {
+                remoteResourceInfos = channelSftp.ls(target);
+            } catch (Exception e) {
+                log.error(ExceptionUtils.getStackTrace(e));
+                String message = e.getMessage();
+                if (null != message && message.contains("Permission denied")) {
+                    Notification.show("权限不足", Notification.Type.ERROR_MESSAGE);
                 } else {
-                    remoteResourceInfos = channelSftp.ls("/home/" + addr.getIdUser());
-                    pathList.add("/home/" + addr.getIdUser());
-                    pathLb.setValue("/home/" + addr.getIdUser());
+                    Notification.show("读取目录失败：" + target, Notification.Type.ERROR_MESSAGE);
                 }
-                currentParentPath = pathLb.getValue();
-            } else {//多次点击目录
-                try {
-                    remoteResourceInfos = channelSftp.ls(path);
-                    currentParentPath = path;
-                } catch (Exception e) {
-                    log.error(ExceptionUtils.getStackTrace(e));
-                    if (e.getMessage().contains("Permission denied")){
-                        Notification.show("权限不足", Notification.Type.ERROR_MESSAGE);
-                    }
-                }
+                return;
             }
-            List<RemoteFileInfo> infos = convertRemoteFileInfo(remoteResourceInfos,currentParentPath);
-            grid.setItems(infos);
-        } catch (SftpException e) {
+            grid.setItems(convertRemoteFileInfo(remoteResourceInfos, target));
+        } catch (Exception e) {
             log.error(ExceptionUtils.getStackTrace(e));
             Notification.show("获取目录数据错误，请及时查看日志！：" + addr.getIdHost(), Notification.Type.ERROR_MESSAGE);
         }
@@ -243,6 +249,10 @@ public class RemoteFileMgmtComponent extends CommonComponent {
 
     private List<RemoteFileInfo> convertRemoteFileInfo(Vector<ChannelSftp.LsEntry> remoteResourceInfos,String parentPath) {
         List<RemoteFileInfo> fileInfos = new ArrayList<>();
+        // 上层 catch 掉异常后 remoteResourceInfos 可能是 null，原实现直接 for 会 NPE
+        if (remoteResourceInfos == null) {
+            return fileInfos;
+        }
         for (ChannelSftp.LsEntry in : remoteResourceInfos) {
             if (!in.getFilename().startsWith(".")) {
                 RemoteFileInfo fileInfo = new RemoteFileInfo();
@@ -260,30 +270,7 @@ public class RemoteFileMgmtComponent extends CommonComponent {
                 } else {
                     fileInfo.setSize(in.getAttrs().getSize() / 1024 / 1024 / 1024 + "Gb");
                 }
-                String[] s = in.getLongname().split("  ");
-                String user = null;
-                if (StrUtil.isNotEmpty(s[1])){
-                    user = s[1].split(" ")[1];
-                    if (NumberUtil.isNumber(user)){
-                        String[] s1 = s[1].split(" ");
-                        if (s1.length > 2){
-                            user = s1[2];
-                        }else{
-                            log.warn("格式错误{}",Arrays.toString(s1));
-                        }
-                    }
-                }else if(StrUtil.isNotEmpty(s[2])){
-                    user = s[2].split(" ")[1];
-                    if (NumberUtil.isNumber(user)){
-                        String[] s1 = s[2].split(" ");
-                        if (s1.length > 2){
-                            user = s1[2];
-                        }else{
-                            log.warn("格式错误{}", Arrays.toString(s1));
-                        }
-                    }
-                }
-                fileInfo.setUserName(user);
+                fileInfo.setUserName(parseUserName(in.getLongname()));
                 fileInfo.setParentPath(parentPath);
                 String currentPath = null;
                 if (parentPath.equals("/")){
@@ -299,6 +286,33 @@ public class RemoteFileMgmtComponent extends CommonComponent {
         return fileInfos;
     }
 
+    /**
+     * 从 ls 的 longname 中解析属主名。
+     * <p>
+     * 原实现按两个空格切分后直接取 s[1]/s[2]，列宽变化或属主名含空格时就是数组越界，
+     * 这里改为按任意空白切分，并对长度做校验。
+     *
+     * @param longname 形如 {@code -rw-r-----, 1, sl, sl, 524329, Jul, 15, 11:29, cas.log.1}
+     * @return 属主名，解析不出返回 null
+     */
+    private String parseUserName(String longname) {
+        if (StrUtil.isEmpty(longname)) {
+            return null;
+        }
+        String[] parts = longname.trim().split("\\s+");
+        // 期望格式：权限 链接数 属主 属组 大小 月份 日 时间/年份 文件名
+        if (parts.length < 4) {
+            log.warn("解析属主失败，longname 格式不符合预期：{}", longname);
+            return null;
+        }
+        String owner = parts[2];
+        if (NumberUtil.isNumber(owner)) {
+            // 属主列显示的是 uid 时，真实名字在下一列
+            owner = parts[3];
+        }
+        return owner;
+    }
+
     private String getPermissionString(Set<FilePermission> permissions) {
         List<FilePermission> collect1 = permissions.stream().filter(f -> f.name().length() == 5).collect(Collectors.toList());
         List<String> usr = collect1.stream().filter(f -> f.name().startsWith("USR")).map(m -> m.name().split("_")[1]).collect(Collectors.toList());
@@ -310,39 +324,41 @@ public class RemoteFileMgmtComponent extends CommonComponent {
     @Override
     public void detach() {
         super.detach();
-        if (jschSession != null) {
+        // 连接失败时 channelSftp / clientUtil 可能为 null，原实现直接调用会 NPE
+        if (channelSftp != null) {
             channelSftp.disconnect();
+            channelSftp = null;
         }
-        clientUtil.closeConnection();
+        if (clientUtil != null) {
+            clientUtil.closeConnection();
+            clientUtil = null;
+        }
     }
 
     @Override
     public void initContent() {
         try {
             if (null == clientUtil) {
-                clientUtil = new SSHClientUtil(addr.getIdHost(), Integer.parseInt(addr.getCdPort()), addr.getIdUser(), addr.getCdPassword());
-                clientUtil.openConnection();
+                clientUtil = SSHClientUtil.connect(addr);
             }
-        } catch (IOException e) {
-            log.error(ExceptionUtils.getStackTrace(e));
-            Notification.show("链接当前机器失败，请检查该IP：" + addr.getIdHost(), Notification.Type.ERROR_MESSAGE);
+        } catch (Exception e) {
+            clientUtil = null;
+            log.error("连接 {} 失败：{}", addr.getIdHost(), e.getMessage());
+            Notification.show("连接 " + addr.getIdHost() + " 失败：" + e.getMessage(), Notification.Type.ERROR_MESSAGE);
         }
     }
 
     @Override
     public void registerHandler() {
         backBtn.addClickListener(e -> {
-            if (pathList.size() > 1) {
-                pathList.removeLast();
-                String prePath = pathList.peekLast();
-                initGridContent(prePath);
-                pathLb.setValue(prePath);
+            if (pathList.size() <= 1) {
+                Notification.show("已经是顶层目录", Notification.Type.HUMANIZED_MESSAGE);
+                return;
             }
-            if (pathList.size() == 1) {
-                String prePath = pathList.peekLast();
-                initGridContent(prePath);
-                pathLb.setValue(prePath);
-            }
+            pathList.removeLast();
+            String prePath = pathList.peekLast();
+            initGridContent(prePath);
+            pathLb.setValue(prePath);
         });
         batchMoveBtn.addClickListener(e -> {
             AbsoluteLayout abs = ComponentFactory.getAbsoluteLayout();
@@ -406,19 +422,20 @@ public class RemoteFileMgmtComponent extends CommonComponent {
                         for (RemoteFileInfo item : selectedItems) {
                             try {
                                 log.warn(item.toString());
-                                if (item.getIsFile()){
+                                if (Boolean.TRUE.equals(item.getIsFile())){
                                     channelSftp.rm( item.getCurrentPath());
                                 }else{
                                     channelSftp.rmdir(item.getCurrentPath());
                                 }
                                 log.warn(ComponentUtil.getCurrentUserName() +"删除了"+item.getFileName());
                             } catch (Exception ex) {
-                                log.error("批量删除发生错误");
-                                log.error(ExceptionUtils.getStackTrace(ex));
-                                if (ex.getMessage().contains("Failure")){
+                                log.error("批量删除发生错误", ex);
+                                // ex.getMessage() 可能为 null
+                                String msg = ex.getMessage();
+                                if (null != msg && msg.contains("Failure")){
                                     Notification.show("目录不为空，无法删除",Notification.Type.ERROR_MESSAGE);
                                 }else{
-                                    Notification.show("删除失败"+ex.getMessage(), Notification.Type.ERROR_MESSAGE);
+                                    Notification.show("删除失败：" + msg, Notification.Type.ERROR_MESSAGE);
                                 }
                             }
                         }
@@ -658,21 +675,27 @@ public class RemoteFileMgmtComponent extends CommonComponent {
 
     private void readyToConnect() {
         try {
-            if (addr.getCdKeyPath() == null && null == jschSession) {
-                //无秘钥连接
-                jschSession = JschUtil.createSession(hostName, Integer.parseInt(addr.getCdPort()), addr.getIdUser(), addr.getCdPassword());
-            } else if (addr.getCdKeyPath() != null && null == jschSession) {
-                //秘钥连接
-                jschSession = JschUtil.createSession(hostName, Integer.parseInt(addr.getCdPort()), addr.getIdUser(), addr.getCdKeyPath(), addr.getCdPassword() == null ? null : addr.getCdPassword().getBytes());
+            if (null == addr) {
+                throw new IllegalStateException("连接信息为空");
+            }
+            if (null == jschSession) {
+                // cdKeyPath 可能是空串而不是 null（页面上传框清空后就是这样），
+                // 用 == null 判断会把空串当成"配了秘钥"，JSch 拿到一个空路径必然认证失败。
+                if (StrUtil.isBlank(addr.getCdKeyPath())) {
+                    //无秘钥连接
+                    jschSession = JschUtil.createSession(hostName, Integer.parseInt(addr.getCdPort()), addr.getIdUser(), addr.getCdPassword());
+                } else {
+                    //秘钥连接
+                    jschSession = JschUtil.createSession(hostName, Integer.parseInt(addr.getCdPort()), addr.getIdUser(), addr.getCdKeyPath(), addr.getCdPassword() == null ? null : addr.getCdPassword().getBytes());
+                }
             }
             jschSession.setTimeout(1800);
             openSftpChannel();
-        } catch (NumberFormatException e) {
-            Notification.show("连接失败请检查配置", Notification.Type.WARNING_MESSAGE);
-            log.error(ExceptionUtils.getStackTrace(e));
-        } catch (JSchException e) {
-            log.error(ExceptionUtils.getStackTrace(e));
-            throw new RuntimeException(e);
+        } catch (Exception e) {
+            // 原来 NumberFormatException 之后仍会执行 jschSession.setTimeout(...)，会话为 null 时 NPE；
+            // JSchException 又被包成 RuntimeException 直接冒到 UI 层
+            log.error("连接远程主机 {} 失败：{}", hostName, e.getMessage(), e);
+            Notification.show("连接失败请检查配置：" + e.getMessage(), Notification.Type.ERROR_MESSAGE);
         }
     }
 
@@ -696,11 +719,17 @@ public class RemoteFileMgmtComponent extends CommonComponent {
     }
 
     public void jumpPath(String path){
+        if (StrUtil.isBlank(path)) {
+            return;
+        }
         initGridContent(path);
-        int n = StrUtil.lastIndexOf(path,"/",path.length(),true);
-        String substring1 = path.substring(0, n);
-        if (!substring1.equals("")){
-            pathList.add(substring1);
+        int n = StrUtil.lastIndexOf(path, "/", path.length(), true);
+        // n 可能为 -1（没有 /）或 0（根下的一级目录），原来直接 substring(0, n) 会抛 StringIndexOutOfBoundsException
+        if (n > 0) {
+            String parent = path.substring(0, n);
+            if (StrUtil.isNotEmpty(parent)) {
+                pathList.add(parent);
+            }
         }
         pathList.add(path);
         pathLb.setValue(path);

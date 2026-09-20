@@ -40,6 +40,8 @@ public class ConnectionInfo {
 		this.idUser = idUser;
 		this.cdPassword = cdPassword;
 		this.cdKeyPath = cdKeyPath;
+		// 原来是 this.desc = desc; 而 cdLogpath 这个入参被直接丢弃了
+		this.cdLogpath = cdLogpath;
 		this.desc = desc;
 	}
 	public String getIdHost() {

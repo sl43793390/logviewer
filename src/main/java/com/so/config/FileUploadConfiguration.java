@@ -19,7 +19,8 @@ public class FileUploadConfiguration implements CommandLineRunner {
 
     @Override
     public void run(String... args) throws Exception {
-        fileStorageService.clear();
+        // 只保证目录存在。原实现在每次启动时先 clear() 再 init()，
+        // 会把用户之前上传的秘钥等文件全部删掉，属于数据丢失。
         fileStorageService.init();
     }
 }

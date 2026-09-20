@@ -42,6 +42,8 @@ public class RemoteMonitorComponent extends CommonComponent {
     private ListSeries cupSeries;
     private ListSeries diskSerial;
     private ListSeries memorySeries;
+    /** SSH 建链失败的原因，直接展示在页面上，避免只看到"数据不可用" */
+    private String connectErrorMessage;
 
     @Override
     public void initLayout() {
@@ -73,19 +75,23 @@ public class RemoteMonitorComponent extends CommonComponent {
         //链接服务器
         try {
             if (null == clientUtil && null != currentConnectionInfo) {
-                clientUtil = new SSHClientUtil(currentConnectionInfo.getIdHost(), Integer.parseInt(currentConnectionInfo.getCdPort()), currentConnectionInfo.getIdUser(), currentConnectionInfo.getCdPassword());
-                clientUtil.openConnection();
+                clientUtil = SSHClientUtil.connect(currentConnectionInfo);
             }
-        } catch (IOException e) {
-            log.error(ExceptionUtils.getStackTrace(e));
-            Notification.show("链接当前机器失败，请检查该IP：" + currentConnectionInfo.getIdHost(), Notification.Type.ERROR_MESSAGE);
+        } catch (Exception e) {
+            connectErrorMessage = e.getMessage();
+            log.error("连接 {} 失败：{}", currentConnectionInfo.getIdHost(), e.getMessage());
+            Notification.show("连接 " + currentConnectionInfo.getIdHost() + " 失败：" + e.getMessage(),
+                    Notification.Type.ERROR_MESSAGE);
         }
     }
 
     @Override
     public void detach() {
         super.detach();
-        this.clientUtil.closeConnection();
+        // 连接失败时 clientUtil 为 null，原来这里会 NPE 并把异常吞在 detach 流程里
+        if (null != clientUtil) {
+            clientUtil.closeConnection();
+        }
     }
 
     /**
@@ -101,6 +107,17 @@ public class RemoteMonitorComponent extends CommonComponent {
         HorizontalLayout firstLayout = ComponentFactory.getHorizontalLayout();
         monitorVerticalLayout.addComponent(firstLayout);
         firstLayout.setDefaultComponentAlignment(Alignment.MIDDLE_LEFT);
+        // SSH 连接建不起来时 clientUtil 为 null，原来后面每个 updateXxx 都会 NPE，整页白屏
+        if (null == clientUtil) {
+            String host = (null == currentConnectionInfo) ? "" : currentConnectionInfo.getIdHost();
+            monitorVerticalLayout.addComponent(
+                    ComponentFactory.getStandardLabel("未能建立到 " + host + " 的 SSH 连接，监控数据不可用"));
+            if (null != connectErrorMessage) {
+                monitorVerticalLayout.addComponent(
+                        ComponentFactory.getStandardLabel("失败原因：" + connectErrorMessage));
+            }
+            return;
+        }
         //CUP使用率
         Chart chart = createCupUseageChart();
         firstLayout.addComponent(chart);
@@ -122,7 +139,7 @@ public class RemoteMonitorComponent extends CommonComponent {
         cupChart.setWidth("300px");
         cupChart.setHeight("300px");
         Configuration conf = cupChart.getConfiguration();
-        conf.setTitle("CUP使用率(%)");
+        conf.setTitle("CPU使用率(%)");
 
         Pane pane = conf.getPane();
         pane.setSize("125%");           // For positioning tick labels
@@ -152,7 +169,7 @@ public class RemoteMonitorComponent extends CommonComponent {
 
         conf.addyAxis(yaxis);
 
-        cupSeries = new ListSeries("cup usage",0);
+        cupSeries = new ListSeries("cpu usage",0);
         cupChart.getConfiguration().addSeries(cupSeries);
         updateCupUsage();
         cupChart.drawChart();
@@ -160,12 +177,23 @@ public class RemoteMonitorComponent extends CommonComponent {
     }
 
     private void updateCupUsage() {
+        if (null == clientUtil) {
+            return;
+        }
         try {
             String s = clientUtil.executeCommand(Constants.CUP_CMD);
-            String replace = s.replace("%", "");
+            if (null == s) {
+                return;
+            }
+            String replace = s.replace("%", "").trim();
+            // 命令输出为空 / 非数字（如命令不存在返回 "command not found"）不应该让整个 UI 抛异常
+            if (!NumberUtil.isNumber(replace)) {
+                log.warn("CPU 使用率命令返回了非数字内容：{}", s.trim());
+                return;
+            }
             cupSeries.updatePoint(0, Double.parseDouble(replace));
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            log.error(ExceptionUtils.getStackTrace(e));
         }
     }
 
@@ -220,20 +248,30 @@ public class RemoteMonitorComponent extends CommonComponent {
     }
 
     private void updateDiskUsage() {
+        if (null == clientUtil) {
+            return;
+        }
         try {
             String s = clientUtil.executeCommand("df -h");
-            String[] split = s.split("\\n");
-            for (int i = 0; i < split.length; i++) {
-                if (split[i].endsWith("/")) {
-                    String[] s1 = split[i].split(" ");
-                    String s2 = s1[s1.length - 2];
-                    String replace = s2.replace("%", "");
-                    diskSerial.updatePoint(0, Double.parseDouble(replace));
-                    break;
-                }
+            if (null == s) {
+                return;
             }
-//			ListSeries series = new ListSeries("cup usage",Double.parseDouble(replace));
-//			diskChart.getConfiguration().addSeries(series);
+            // df -h 的列间距不保证是单个空格，用 \s+ 切分再取百分比列
+            for (String line : s.split("\\R")) {
+                if (!line.trim().endsWith("/")) {
+                    continue;
+                }
+                String[] cells = line.trim().split("\\s+");
+                if (cells.length < 2) {
+                    continue;
+                }
+                String usage = cells[cells.length - 2].replace("%", "").trim();
+                if (!NumberUtil.isNumber(usage)) {
+                    continue;
+                }
+                diskSerial.updatePoint(0, Double.parseDouble(usage));
+                break;
+            }
         } catch (IOException e) {
             log.error(ExceptionUtils.getStackTrace(e));
         }
@@ -290,22 +328,37 @@ public class RemoteMonitorComponent extends CommonComponent {
     }
 
     private void updateMemUsage() {
+        if (null == clientUtil) {
+            return;
+        }
         try {
             String s = clientUtil.executeCommand("free -m");
-            String[] split = s.split("\\n");
-            for (int i = 0; i < split.length; i++) {
-                if (split[i].contains("Mem")) {
-                    String[] split1 = split[i].split("       ");
-                    String totalMem = split1[1].trim();
-                    double totalMemNum = Double.parseDouble(totalMem);
-                    String freeMem = split1[3].trim();
-                    double freeMemNum = Double.parseDouble(freeMem);
-                    double ratio = ((totalMemNum - freeMemNum) / totalMemNum) * 100;
-                    double ratioNew = NumberUtil.round(ratio, 2).doubleValue();
-                    memorySeries.updatePoint(0,ratioNew);
-                    break;
+            if (null == s) {
+                return;
+            }
+            for (String line : s.split("\\R")) {
+                String trimmed = line.trim();
+                if (!trimmed.startsWith("Mem")) {
+                    continue;
                 }
-                System.out.println(split[i]);
+                // free -m 的列是右对齐空格，列宽不固定。
+                // 原实现按固定的 7 个空格切分，切出来的是好几列拼在一起，parseDouble 必然抛 NumberFormatException
+                String[] cells = trimmed.split("\\s+");
+                if (cells.length < 4) {
+                    continue;
+                }
+                if (!NumberUtil.isNumber(cells[1]) || !NumberUtil.isNumber(cells[3])) {
+                    log.warn("free -m 输出无法解析：{}", trimmed);
+                    return;
+                }
+                double totalMemNum = Double.parseDouble(cells[1]);
+                double freeMemNum = Double.parseDouble(cells[3]);
+                if (totalMemNum <= 0) {
+                    return;
+                }
+                double ratio = ((totalMemNum - freeMemNum) / totalMemNum) * 100;
+                memorySeries.updatePoint(0, NumberUtil.round(ratio, 2).doubleValue());
+                return;
             }
         } catch (IOException e) {
             log.error(ExceptionUtils.getStackTrace(e));
@@ -325,16 +378,27 @@ public class RemoteMonitorComponent extends CommonComponent {
     }
 
     class BackgroundThread extends Thread {
-        int count = 0;
+
+        /** 4800 * 3s ≈ 4 小时 */
+        private static final int MAX_TICKS = 4800;
+
+        BackgroundThread() {
+            // 必须是守护线程：否则 detach 后万一没被中断，会一直挂着不释放
+            setDaemon(true);
+            setName("remote-monitor-refresh");
+        }
 
         @Override
         public void run() {
+            int count = 0;
             try {
-                // Update the data for a while
-                while (count < 4800) {
+                while (count < MAX_TICKS) {
                     Thread.sleep(3000);
+                    // 原实现在 currentUI 为 null 时只 interrupt() 而没有 return，
+                    // 紧接着仍然执行 currentUI.access(...)，直接 NullPointerException
                     if (null == currentUI) {
-                        this.interrupt();
+                        log.info("监控页面已关闭，停止刷新");
+                        return;
                     }
                     currentUI.access(new Runnable() {
                         @Override
@@ -346,18 +410,14 @@ public class RemoteMonitorComponent extends CommonComponent {
                     });
                     count++;
                 }
-                // Inform that we have stopped running
-                currentUI.access(new Runnable() {
-                    @Override
-                    public void run() {
-                        System.out.println("time over");
-                    }
-                });
+                log.info("监控刷新已达最大次数（{} 次），停止刷新", MAX_TICKS);
             } catch (InterruptedException e) {
-                e.printStackTrace();
                 Thread.currentThread().interrupt();
+                log.info("监控刷新线程已被中断");
             } catch (UIDetachedException e) {
-                e.printStackTrace();
+                log.info("监控页面已 detach，停止刷新");
+            } catch (Exception e) {
+                log.error(ExceptionUtils.getStackTrace(e));
             }
         }
     }

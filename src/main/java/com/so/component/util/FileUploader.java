@@ -60,25 +60,29 @@ public class FileUploader implements Receiver, SucceededListener, FailedListener
 	}
 	@Override
 	public void uploadSucceeded(SucceededEvent event) {
-		// Show the uploaded file in the image viewer
-		// try {
-		// InputStreamReader inputStreamReader = new InputStreamReader(new FileInputStream(file));
-		// } catch (FileNotFoundException e) {
-		// // TODO Auto-generated catch block
-		// e.printStackTrace();
-		// }
-		ProjectsMapper projectsMapper = ComponentUtil.applicationContext.getBean(ProjectsMapper.class);
-		QueryWrapper<ProjectList> queryWrapper = new QueryWrapper<ProjectList>();
-		queryWrapper.eq("id_host", "localhost").eq("id_project",idProject);
-		ProjectList selectById = projectsMapper.selectOne(queryWrapper);
-		if (file.getName().endsWith("jar")) {
-			selectById.setJarName(file.getName());
-			UpdateWrapper<ProjectList> up = new UpdateWrapper<ProjectList>();
-			HashMap<String, String> map = new HashMap<String, String>();
-			map.put("id_host", "localhost");
-			map.put("id_project", idProject);
-			up.allEq(map);
-			projectsMapper.update(selectById, up);
+		// 这个接收器在「本地文件管理」「上传秘钥」等场景下没有 idProject，
+		// 原来无条件去查 project_list，查不到时 selectById.setJarName(...) 会直接 NPE
+		boolean hasProject = null != idProject && idProject.trim().length() > 0;
+		if (null != file && hasProject) {
+			try {
+				ProjectsMapper projectsMapper = ComponentUtil.applicationContext.getBean(ProjectsMapper.class);
+				QueryWrapper<ProjectList> queryWrapper = new QueryWrapper<ProjectList>();
+				queryWrapper.eq("id_host", "localhost").eq("id_project", idProject);
+				ProjectList selectById = projectsMapper.selectOne(queryWrapper);
+				if (null == selectById) {
+					log.warn("project_list 中未找到 id_project={}，跳过 jar 名称回写", idProject);
+				} else if (file.getName().endsWith("jar")) {
+					selectById.setJarName(file.getName());
+					UpdateWrapper<ProjectList> up = new UpdateWrapper<ProjectList>();
+					HashMap<String, String> map = new HashMap<String, String>();
+					map.put("id_host", "localhost");
+					map.put("id_project", idProject);
+					up.allEq(map);
+					projectsMapper.update(selectById, up);
+				}
+			} catch (Exception e) {
+				log.error("上传后回写项目信息失败：{}", e.getMessage(), e);
+			}
 		}
 		if (null != component){
 			component.initLayout();

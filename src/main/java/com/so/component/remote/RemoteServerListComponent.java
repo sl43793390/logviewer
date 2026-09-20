@@ -38,7 +38,6 @@ public class RemoteServerListComponent extends CommonComponent {
 
 	
 	private static final Logger log = LoggerFactory.getLogger(RemoteServerListComponent.class);
-	public static ConnectionInfo connectionInfo = null;
 	private static final long serialVersionUID = 8995914798319911923L;
 	private Panel mainPanel;
 	private VerticalLayout contentLayout;
@@ -70,8 +69,15 @@ public class RemoteServerListComponent extends CommonComponent {
 		List<ConnectionInfo> serverListFromDb = connectionInfoMapper.selectList(new QueryWrapper<ConnectionInfo>());
 		List<String> remoteServerList = Util.getRemoteServerList();
 		for (int i = 0; i < remoteServerList.size(); i++) {
-			String[] split = remoteServerList.get(i).split("=");
-			ConnectionInfo info = new ConnectionInfo(split[0], split[3],  split[1],  split[2], split[4]);
+			String line = remoteServerList.get(i);
+			// 配置格式：ip=用户=密码=端口[=私钥文件名]，私钥可省略，所以必须做长度校验
+			String[] split = line.split("=");
+			if (split.length < 4) {
+				log.warn("服务器配置格式不正确，已跳过该行：{}", line);
+				continue;
+			}
+			String keyPath = split.length > 4 ? split[4] : null;
+			ConnectionInfo info = new ConnectionInfo(split[0], split[3], split[1], split[2], keyPath);
 			serverListFromDb.add(info);
 		}
 		serverLayout.setHeight((600+serverListFromDb.size()*40)+"px");
@@ -193,7 +199,6 @@ public class RemoteServerListComponent extends CommonComponent {
 	 * @param data
 	 */
 	private void addRemoteSSHTab(ConnectionInfo data) {
-		connectionInfo = data;
 		RemoteSSHXterm bean = ComponentUtil.applicationContext.getBean(RemoteSSHXterm.class);
 //		RemoteSSHComponent bean = ComponentUtil.applicationContext.getBean(RemoteSSHComponent.class);
 //		RemoteSSHComponentV2 bean = ComponentUtil.applicationContext.getBean(RemoteSSHComponentV2.class);
@@ -297,22 +302,17 @@ public class RemoteServerListComponent extends CommonComponent {
 						return;
 					}
 					try {
-						if (null != loader.getFile()) {
-							//上传了秘钥
-							log.info("使用秘钥连接");
-							SSHClientUtil client = new SSHClientUtil(hostName,sshPort,loader.getKeypath());
-							client.openConnection();
-//							session = JschUtil.createSession(hostName, sshPort, userName, loader.getKeypath(), password == null ? null :password.getBytes());
-//							channel = JschUtil.openSftp(session, 1800);
-						}else {
-							SSHClientUtil client = new SSHClientUtil(hostName,sshPort,userName,password);
-							client.openConnection();
-//							session = JschUtil.createSession(hostName, sshPort, userName, password);
-//							channel = JschUtil.openSftp(session, 1800);
-						}
+						// 这里只是先验证一次连通性，保存前不做任何持久连接，用完立即关闭。
+						// 注意：原来按 sshPort(Integer) 去 new SSHClientUtil(...) 会命中密码构造器，
+						// 导致"上传了秘钥"这条分支其实从没真正连过，密钥是否可用根本没验证。
+						// 现在统一交给 SSHClientUtil.connect()：配了私钥先试私钥，失败再回落密码。
+						ConnectionInfo candidate = new ConnectionInfo(hostName, String.valueOf(sshPort), userName, password,
+								StrUtil.isNotEmpty(loader.getKeypath()) ? loader.getKeypath() : null, desc.getValue());
+						SSHClientUtil client = SSHClientUtil.connect(candidate);
+						client.closeConnection();
 					} catch (Exception ex) {
-						log.error(ExceptionUtils.getStackTrace(ex));
-						Notification.show("创建链接失败，请检查IP、端口、用户名、密码是否有误！", Notification.Type.WARNING_MESSAGE);
+						log.error("连接 {} 失败：{}", hostName, ex.getMessage());
+						Notification.show("创建链接失败：" + ex.getMessage(), Notification.Type.WARNING_MESSAGE);
 						return;
 					}
 

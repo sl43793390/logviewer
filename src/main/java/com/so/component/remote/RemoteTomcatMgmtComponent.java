@@ -25,7 +25,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Service;
 
-import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
@@ -46,7 +45,7 @@ public class RemoteTomcatMgmtComponent extends CommonComponent {
 	private Panel mainPanel;
 	private VerticalLayout contentLayout;
 
-	public FileUploader loader;
+	public RemoteFileUploader loader;
 	@Autowired
 	private TomcatInfoMapper tomcatInfoMapper;
 	private TextField tomcatPath;
@@ -247,12 +246,25 @@ public class RemoteTomcatMgmtComponent extends CommonComponent {
 			return b;
 		}).setCaption("修改");
 		grid.addComponentColumn(p -> {
-			loader = new FileUploader();
-			String tomPath = StrUtil.removeSuffix(p.getTomcatPath(), "/");
-			loader.setParentPath(tomPath+File.separator+"webapps");
+			// 这是「远程」tomcat：必须走 RemoteFileUploader 中转。
+			// 原来用的本地 FileUploader 会把 war 包落到 Web 服务器自己的磁盘上，
+			// 而且远端 Linux 路径不能用 File.separator 拼（Windows 上会拼出 \webapps）
+			loader = new RemoteFileUploader();
+			loader.setRemoteFlag(true);
+			loader.setSession(jschSession);
+			loader.setAddr(addr);
+			loader.setUploadServerScript(false);
+			String webappsPath = StrUtil.removeSuffix(p.getTomcatPath(), "/") + "/webapps";
+			loader.setParentPath(webappsPath);
 			loader.setIdProject(p.getTomcatId());
 			Upload upload = new Upload("上传", loader);
 			upload.setImmediateMode(true);
+			upload.addStartedListener(event -> {
+				if (!LoginView.checkPermission(Constants.UPLOAD)) {
+					Notification.show("权限不足，请联系管理员", Notification.Type.WARNING_MESSAGE);
+					throw new RuntimeException("权限不足，终止上传");
+				}
+			});
 			upload.setButtonCaption("上传");
 			upload.addStyleName("upload-style-button");
 			upload.setHeight("30px");
@@ -281,14 +293,14 @@ public class RemoteTomcatMgmtComponent extends CommonComponent {
 
 		TomcatInfoEntity pro = new TomcatInfoEntity();
 		pro.setIdHost(addr.getIdHost());
-		if (idProjectField.getValue() == null || tomcatPath.getValue() == null) {
+		if (StrUtil.isBlank(idProjectField.getValue()) || StrUtil.isBlank(tomcatPath.getValue())) {
 			Notification.show("项目ID、项目所在路径不能为空！", Notification.Type.WARNING_MESSAGE);
 			return;
 		}
-		String id = StringUtils.removeEnd(idProjectField.getValue(), "/");
+		String id = StringUtils.removeEnd(idProjectField.getValue().trim(), "/");
 		pro.setTomcatId(id);
 		pro.setNameTomcat(nameProjectField.getValue());
-		pro.setTomcatPath(tomcatPath.getValue());
+		pro.setTomcatPath(tomcatPath.getValue().trim());
 		pro.setTag(classField.getValue());
 		pro.setWebappPath(webappField.getValue());
 		pro.setCdDescription(descField.getValue());

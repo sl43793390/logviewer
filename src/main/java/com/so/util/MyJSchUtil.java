@@ -2,6 +2,7 @@ package com.so.util;
 import com.jcraft.jsch.*;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -20,7 +21,10 @@ public class MyJSchUtil {
 	private static final Logger log = LoggerFactory.getLogger(MyJSchUtil.class);
 
     public static final int SESSION_TIMEOUT = 60000;
-    public static final int CONNECT_TIMEOUT = 500;
+    /**
+     * 通道连接超时。原来是 500ms，局域网内偶尔都会超时导致命令"静默失败"，放宽到 5s。
+     */
+    public static final int CONNECT_TIMEOUT = 5000;
 
     /**
      * get session
@@ -54,30 +58,29 @@ public class MyJSchUtil {
         ChannelExec channel = null;
         try {
             channel = openExecChannel(session);
+            // 关键：把 stderr 挂到一个内存缓冲上，由 JSch 自己抽干。
+            // 原实现是先读完 stdout 再读 stderr，一旦 stderr 缓冲区写满（约 64KB），
+            // 远端会阻塞在写 stderr 上，本地则阻塞在读 stdout 上 —— 双向死等。
+            ByteArrayOutputStream errBuffer = new ByteArrayOutputStream();
+            channel.setErrStream(errBuffer);
             channel.setCommand(command);
             channel.connect(CONNECT_TIMEOUT);
             InputStream input = channel.getInputStream();
-            InputStream errStream = channel.getErrStream();
             try {
-                BufferedReader inputReader = new BufferedReader(new InputStreamReader(input));
+                BufferedReader inputReader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8));
                 String inputLine;
                 while ((inputLine = inputReader.readLine()) != null) {
                     log.info("   {}", inputLine);
                     resultLines.add(inputLine);
                 }
-                BufferedReader errorReader = new BufferedReader(new InputStreamReader(errStream));
-                String inputLine2;
-                while ((inputLine2 = errorReader.readLine()) != null) {
-                    log.info("错误信息：   {}", inputLine2);
-                    resultLines.add(inputLine2);
-                }
             } finally {
-                if (input != null) {
-                    try {
-                        input.close();
-                    } catch (Exception e) {
-                        log.error("JSch inputStream close error:", e);
-                    }
+                closeInputStream(input);
+            }
+            String errContent = new String(errBuffer.toByteArray(), StandardCharsets.UTF_8);
+            for (String errLine : errContent.split("\\r?\\n")) {
+                if (!errLine.trim().isEmpty()) {
+                    log.info("错误信息：   {}", errLine);
+                    resultLines.add(errLine);
                 }
             }
         } catch (IOException e) {
@@ -173,46 +176,38 @@ public class MyJSchUtil {
         return -1;
     }
 
-    public static void scpTo2(Session session,String localfile,String remoteFilePath) {
-         Channel channel = null;
-         ChannelExec channelExec = null;
-  
-         try {
-             // 建立SSH会话
-             session.setConfig("StrictHostKeyChecking", "no");
-             session.setPassword("test");
-             session.connect();
-  
-             // 打开SCP通道
-             channel = session.openChannel("exec");
-             channelExec = (ChannelExec) channel;
-  
-             // SCP命令，从远程服务器下载文件
-             String command = "scp "+ localfile +" "+ session.getUserName()+"@"+session.getHost()+":"+remoteFilePath;
-             log.info("命令："+command);
-             channelExec.setCommand(command);
-             channelExec.setErrStream(System.err);
-  
-             // 获取远程文件输入流
-//             InputStream in = channelExec.getInputStream();
-             channelExec.connect();
-  
-             // 处理输入流（可选）
-  
-         } catch (Exception e) {
-             e.printStackTrace();
-         } finally {
-             // 关闭通道和会话
-             if (channelExec != null && channelExec.isConnected()) {
-                 channelExec.disconnect();
-             }
-             if (channel != null && channel.isConnected()) {
-                 channel.disconnect();
-             }
-             if (session != null && session.isConnected()) {
-                 session.disconnect();
-             }
-         }
+    /**
+     * 把本地文件推到远端。
+     * <p>
+     * 原实现里写死了 {@code session.setPassword("test")}，并且无论调用方是否还需要
+     * 这个 session，结束时都会把它 disconnect 掉；由外部传入的 session 不应该被这里
+     * 修改密码或关闭，已修正为只使用、不修改、不关闭。
+     */
+    public static void scpTo2(Session session, String localfile, String remoteFilePath) {
+        ChannelExec channelExec = null;
+        try {
+            session.setConfig("StrictHostKeyChecking", "no");
+            if (!session.isConnected()) {
+                session.connect(SESSION_TIMEOUT);
+            }
+
+            // 打开SCP通道
+            channelExec = (ChannelExec) session.openChannel("exec");
+
+            // SCP命令，把本地文件推送到远程服务器
+            String command = "scp " + localfile + " " + session.getUserName() + "@" + session.getHost() + ":" + remoteFilePath;
+            log.info("命令：{}", command);
+            channelExec.setCommand(command);
+            channelExec.setErrStream(System.err);
+
+            channelExec.connect(CONNECT_TIMEOUT);
+        } catch (Exception e) {
+            log.error("scp 推送失败", e);
+        } finally {
+            if (channelExec != null) {
+                channelExec.disconnect();
+            }
+        }
     }
     /**
      * scp remote file to local
@@ -236,10 +231,11 @@ public class MyJSchUtil {
             buf[0] = 0;
             out.write(buf, 0, 1);
             out.flush();
-            while (true) {
-                if (checkAck(in) != 'C') {
-                    break;
-                }
+            // 等待对端发来控制信息。原实现写成循环判断 != 'C' 就 break，
+            // 一旦确实收到 'C' 反而继续循环，会一直读到流结束才算完（死循环）
+            if (checkAck(in) != 'C') {
+                log.error("scp from error: 未收到 'C' 控制码，source={}", source);
+                return -1;
             }
             //read '644 '
             in.read(buf, 0, 4);
@@ -566,8 +562,12 @@ public class MyJSchUtil {
         if (b == 1 || b == 2) {
             StringBuilder sb = new StringBuilder();
             int c;
+            // 必须同时判断 -1，否则对端提前断开时会在这里死循环
             do {
                 c = in.read();
+                if (c == -1) {
+                    break;
+                }
                 sb.append((char) c);
             }
             while (c != '\n');

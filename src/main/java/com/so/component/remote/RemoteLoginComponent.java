@@ -226,7 +226,10 @@ public class RemoteLoginComponent extends CommonComponent {
 	}
 	private void getConfigForHis() {
 		QueryWrapper<LogPath> queryWrapper = new QueryWrapper<LogPath>();
-		queryWrapper.eq("id_loghost", hostName);
+		// hostName 在点"连接"之前是 null，直接 eq 会拼出 id_loghost = null 的无效条件
+		if (null != hostName) {
+			queryWrapper.eq("id_loghost", hostName);
+		}
 		List<LogPath> selectList = logPathMapper.selectList(queryWrapper);
 		for (LogPath logPath : selectList) {
 			items.add(logPath.getIdLogPath());
@@ -424,7 +427,8 @@ public class RemoteLoginComponent extends CommonComponent {
 
 	private void loadFiles(String path, String suffix, LsEntry en) {
 		List<String> fileAttributes = getFileAttributes(en);
-		if (null != fileAttributes && null != fileAttributes.get(0) && !fileAttributes.get(0).startsWith("d")) {
+		if (null != fileAttributes && !fileAttributes.isEmpty() && null != fileAttributes.get(0)
+				&& !fileAttributes.get(0).startsWith("d")) {
 			Date date = getFileLastModified(fileAttributes);
 			PathEntityInfo info = new PathEntityInfo();
 			info.setFileName(en.getFilename());
@@ -438,7 +442,7 @@ public class RemoteLoginComponent extends CommonComponent {
 	}
 
 	private String getFileSize(List<String> fileAttributes) {
-		if (!fileAttributes.isEmpty()) {
+		if (fileAttributes.size() > 4) {
 			String string = fileAttributes.get(4);
 			if (string.endsWith("G") || string.endsWith("M") || string.endsWith("K")) {
 				return string;
@@ -466,13 +470,15 @@ public class RemoteLoginComponent extends CommonComponent {
 	}
 
 	private Date getFileLastModified(List<String> fileAttributes) {
-		if (!fileAttributes.isEmpty()) {
+		if (fileAttributes.size() >= 8) {
 			Calendar instance = Calendar.getInstance();
 			int year = instance.get(Calendar.YEAR);
 			if (!fileAttributes.get(7).contains(":")) {
 				year = Integer.parseInt(fileAttributes.get(7));
 			}
-			instance.set(year, Util.getMonth(fileAttributes.get(5)), Integer.parseInt(fileAttributes.get(6)));
+			// Calendar 的月份是 0 基的，Util.getMonth 返回 1~12，必须减 1，
+			// 否则所有文件的"修改日期"都会往后偏一个月
+			instance.set(year, Util.getMonth(fileAttributes.get(5)) - 1, Integer.parseInt(fileAttributes.get(6)));
 			Date time = instance.getTime();
 			return time;
 		}
@@ -491,7 +497,7 @@ public class RemoteLoginComponent extends CommonComponent {
 	}
 
 	private void writeSearchPathToFile() {
-		if (pathField.getValue().equals("")) {
+		if (pathField.getValue() == null || pathField.getValue().equals("")) {
 			return;
 		}
 		if (items.contains(pathField.getValue())) {
@@ -592,7 +598,9 @@ public class RemoteLoginComponent extends CommonComponent {
 					try {
 						connectionInfoMapper.insert(new ConnectionInfo(host.getValue(), port.getValue(), usernameField.getValue(), passField.getValue(), loader.getKeypath()));
 					} catch (Exception e1) {
-						log.error("链接信息已存在");
+						// 原来只打一句"链接信息已存在"，真实原因（主键冲突 / 数据库不可用）全被吞掉
+						log.error("保存连接信息失败：{}:{}", host.getValue(), port.getValue(), e1);
+						Notification.show("该连接已存在或保存失败，请检查", Notification.Type.WARNING_MESSAGE);
 						return;
 					}
 					this.close();
@@ -654,8 +662,12 @@ public class RemoteLoginComponent extends CommonComponent {
 			isExist = true;
 			return sftpATTRS.isDir();
 		} catch (Exception e) {
-			if (e.getMessage().toLowerCase().equals("no such file")) {
+			// e.getMessage() 可能为 null，原写法直接 .toLowerCase() 会再抛一个 NPE
+			String message = e.getMessage();
+			if (null != message && message.toLowerCase().contains("no such file")) {
 				isExist = false;
+			} else {
+				log.warn("判断远程路径 {} 是否存在时出错：{}", path, message);
 			}
 		}
 		return isExist;

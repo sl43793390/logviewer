@@ -40,6 +40,7 @@ import com.vaadin.ui.TextField;
 import com.vaadin.ui.VerticalLayout;
 
 import cn.hutool.core.util.NumberUtil;
+import cn.hutool.core.util.StrUtil;
 
 /**
  * 远程自动登录后跳转的搜索日志页面
@@ -342,7 +343,8 @@ public class RemoteLogSearchComponent extends CommonComponent {
 
 	private void loadFiles(String path, String suffix, LsEntry en) {
 		List<String> fileAttributes = getFileAttributes(en);
-		if (null != fileAttributes && null != fileAttributes.get(0) && !fileAttributes.get(0).startsWith("d")) {
+		if (null != fileAttributes && !fileAttributes.isEmpty() && null != fileAttributes.get(0)
+				&& !fileAttributes.get(0).startsWith("d")) {
 			Date date = getFileLastModified(fileAttributes);
 			PathEntityInfo info = new PathEntityInfo();
 			info.setFileName(en.getFilename());
@@ -356,7 +358,7 @@ public class RemoteLogSearchComponent extends CommonComponent {
 	}
 
 	private Date getFileLastModified(List<String> fileAttributes) {
-		if (!fileAttributes.isEmpty()) {
+		if (fileAttributes.size() >= 8) {
 			Calendar instance = Calendar.getInstance();
 			int year = instance.get(Calendar.YEAR);
 			if (!fileAttributes.get(7).contains(":")) {
@@ -381,7 +383,7 @@ public class RemoteLogSearchComponent extends CommonComponent {
 	}
 
 	private String getFileSize(List<String> fileAttributes) {
-		if (!fileAttributes.isEmpty()) {
+		if (fileAttributes.size() > 4) {
 			String string = fileAttributes.get(4);
 			if (string.endsWith("G") || string.endsWith("M") || string.endsWith("K")) {
 				return string;
@@ -409,7 +411,8 @@ public class RemoteLogSearchComponent extends CommonComponent {
 	}
 	
 	private void writeSearchPathToFile() {
-		if (pathField.getValue().equals("")) {
+		// TextField 默认值是 ""，但也可能是 null，原来直接 equals("") 会 NPE
+		if (StrUtil.isBlank(pathField.getValue())) {
 			return;
 		}
 		if (items.contains(pathField.getValue())) {
@@ -421,6 +424,16 @@ public class RemoteLogSearchComponent extends CommonComponent {
 		pathHisCombo.setItems(items);
 		String pathStr =addr.getIdHost()+"=" + pathField.getValue() + "=" + "##";
 		Util.saveUserConfigToFile(pathStr);
+	}
+
+	@Override
+	public void detach() {
+		super.detach();
+		// channel 是本组件自己打开的，页面销毁必须释放，否则每开一次都会漏一个 SFTP channel
+		if (null != channel) {
+			channel.disconnect();
+			channel = null;
+		}
 	}
 
 	
@@ -475,8 +488,12 @@ public class RemoteLogSearchComponent extends CommonComponent {
 			isExist = true;
 			return sftpATTRS.isDir();
 		} catch (Exception e) {
-			if (e.getMessage().toLowerCase().equals("no such file")) {
+			// e.getMessage() 可能为 null，原写法直接 .toLowerCase() 会再抛一个 NPE
+			String message = e.getMessage();
+			if (null != message && message.toLowerCase().contains("no such file")) {
 				isExist = false;
+			} else {
+				log.warn("判断远程路径 {} 是否存在时出错：{}", path, message);
 			}
 		}
 		return isExist;
@@ -495,12 +512,14 @@ public class RemoteLogSearchComponent extends CommonComponent {
 
 		@Override
 		public InputStream getStream() {
-			InputStream inputStream;
+			if (null == channel) {
+				log.warn("SFTP channel 已关闭，无法下载 {}", filePathInfo.getAbsolutePath());
+				return null;
+			}
 			try {
-				inputStream = channel.get(filePathInfo.getAbsolutePath());
-				return inputStream;
+				return channel.get(filePathInfo.getAbsolutePath());
 			} catch (SftpException e) {
-				e.printStackTrace();
+				log.error("下载远程文件失败：{}", filePathInfo.getAbsolutePath(), e);
 			}
 			return null;
 		}

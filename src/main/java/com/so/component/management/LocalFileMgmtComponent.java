@@ -1,6 +1,5 @@
 package com.so.component.management;
 
-import cn.hutool.core.collection.CollectionUtil;
 import cn.hutool.core.date.DateUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.system.SystemUtil;
@@ -60,7 +59,7 @@ public class LocalFileMgmtComponent extends CommonComponent {
         contentLayout.setHeight("700px");
         initMainLayout();
 //        加载目录
-        initGridContent(null);
+        navigateTo(null);
     }
 
     private void initMainLayout() {
@@ -80,18 +79,14 @@ public class LocalFileMgmtComponent extends CommonComponent {
         grid.setWidthFull();
         grid.setHeightFull();
         grid.addComponentColumn(file ->{
-            if (!file.getIsFile()) {
+            if (!Boolean.TRUE.equals(file.getIsFile())) {
                 Button b = ComponentFactory.getLinkButton(file.getFileName());
-                b.addClickListener(e -> {
-                    initGridContent(file.getCurrentPath());
-                    pathList.add(file.getCurrentPath());
-                    pathLb.setValue(file.getCurrentPath());
-                });
+                // 历史栈由 navigateTo 统一维护，这里不要再 add，否则会重复入栈导致「返回」错乱
+                b.addClickListener(e -> navigateTo(file.getCurrentPath()));
                 return b;
             }
             return ComponentFactory.getStandardLabel(file.getFileName());
         }).setCaption("名称");
-        grid.addColumn(RemoteFileInfo::getFileName).setCaption("名称");
         grid.addColumn(RemoteFileInfo::getPermission).setCaption("权限");
         grid.addColumn(RemoteFileInfo::getUserName).setCaption("用户");
         grid.addColumn(RemoteFileInfo::getSize).setCaption("大小");
@@ -109,7 +104,7 @@ public class LocalFileMgmtComponent extends CommonComponent {
 //            return null;
 //        }).setCaption("打开");
         grid.addComponentColumn(file -> {
-            if (!file.getIsFile()) {
+            if (!Boolean.TRUE.equals(file.getIsFile())) {
                 FileUploader loader = new FileUploader();
                 loader.setParentPath(file.getCurrentPath());
                 Upload upload = new Upload("上传", loader);
@@ -128,7 +123,7 @@ public class LocalFileMgmtComponent extends CommonComponent {
             return null;
         }).setCaption("上传");
         grid.addComponentColumn(file -> {
-            if (file.getIsFile()) {
+            if (Boolean.TRUE.equals(file.getIsFile())) {
                 Button b = ComponentFactory.getLinkButton("下载");
                 FileDownloader fileDownloader = new FileDownloader(new StreamResource(new FileStreamResource(file), file.getFileName()));
                 fileDownloader.extend(b);
@@ -146,7 +141,7 @@ public class LocalFileMgmtComponent extends CommonComponent {
                             Notification.show("权限不足，请联系管理员", Notification.Type.WARNING_MESSAGE);
                             return;
                         }
-                        if (file.getIsFile()){
+                        if (Boolean.TRUE.equals(file.getIsFile())){
                             Files.delete(Paths.get(file.getCurrentPath()));
                         }else{
                             win.close();
@@ -155,7 +150,8 @@ public class LocalFileMgmtComponent extends CommonComponent {
                         }
                         win.close();
                         Notification.show("提示：", "删除成功", Notification.Type.WARNING_MESSAGE);
-                        initGridContent(file.getCurrentPath());
+                        // 刷新当前目录，走 loadDir 而不是 navigateTo，避免污染导航历史
+                        loadDir(pathList.peekLast());
                     } catch (IOException ex) {
                         log.error("删除文件错误" + ExceptionUtils.getStackTrace(ex));
                     }
@@ -166,82 +162,105 @@ public class LocalFileMgmtComponent extends CommonComponent {
         }).setCaption("删除");
     }
 
-    private void initGridContent(String path) {
-        //创建链接获取用户目录列表
-        String username = System.getProperty("user.name");
+    /**
+     * 进入一个目录：统一负责「写入导航历史 + 加载内容 + 刷新路径显示」。
+     * 之前历史栈在 initGridContent 和点击事件里各 add 一次，导致每个目录入栈两遍，
+     * 「返回」会回到当前目录而不是上一级。
+     */
+    private void navigateTo(String path) {
+        String realPath = StrUtil.isBlank(path) ? resolveStartDir() : path;
+        File dir = new File(realPath);
+        if (!dir.exists() || !dir.isDirectory()) {
+            Notification.show("目录不存在或无访问权限：" + realPath, Notification.Type.WARNING_MESSAGE);
+            return;
+        }
+        pathList.add(realPath);
+        loadDir(dir);
+        pathLb.setValue(realPath);
+    }
+
+    /** 只加载目录内容，不改变导航历史 */
+    private void loadDir(String path) {
+        if (StrUtil.isBlank(path)) {
+            return;
+        }
+        File dir = new File(path);
+        if (!dir.exists() || !dir.isDirectory()) {
+            Notification.show("目录不存在或无访问权限：" + path, Notification.Type.WARNING_MESSAGE);
+            return;
+        }
+        loadDir(dir);
+    }
+
+    private void loadDir(File dir) {
         try {
-            List<RemoteFileInfo> remoteResourceInfos = null;
-            if (null == path) {
-                if (SystemUtil.getOsInfo().isLinux()){
-                    pathList.add("/");
-                }else{
-                    pathList.add(SystemUtil.getUserInfo().getHomeDir());
-                }
-                if ("root".equals(username)) {
-                    File file = new File("/root");
-                    remoteResourceInfos = convertRemoteFileInfo(Arrays.asList(file.listFiles()), username);
-                    pathList.add("/root");
-                    pathLb.setValue("/root");
-                } else {
-                    String currentDir = SystemUtil.getUserInfo().getHomeDir();
-                    File file = new File(currentDir);
-                    remoteResourceInfos = convertRemoteFileInfo(Arrays.asList(file.listFiles()), username);
-                    pathList.add(currentDir);
-                    pathLb.setValue(currentDir);
-                }
-            } else {//多次点击目录
-                File file = new File(path);
-                if (file.listFiles() != null && file.listFiles().length != 0){
-                    remoteResourceInfos = convertRemoteFileInfo(Arrays.asList(file.listFiles()), username);
-                }
-            }
-            if (CollectionUtil.isEmpty(remoteResourceInfos)){
+            File[] files = dir.listFiles();
+            // 没有读权限时 listFiles() 返回 null，原来直接 Arrays.asList(null) 会 NPE
+            if (files == null || files.length == 0) {
                 grid.setItems(new ArrayList<RemoteFileInfo>());
-            }else{
-                grid.setItems(remoteResourceInfos);
+                return;
             }
+            String username = System.getProperty("user.name");
+            grid.setItems(convertRemoteFileInfo(Arrays.asList(files), username));
         } catch (Exception e) {
             log.error(ExceptionUtils.getStackTrace(e));
-            Notification.show("获取目录数据错误，请及时查看日志！：", Notification.Type.ERROR_MESSAGE);
+            Notification.show("获取目录数据错误，请及时查看日志！", Notification.Type.ERROR_MESSAGE);
         }
+    }
+
+    /** 默认打开的目录：Linux 下 root 用户进 /root，其他取用户主目录 */
+    private String resolveStartDir() {
+        String username = System.getProperty("user.name");
+        if (SystemUtil.getOsInfo().isLinux() && "root".equals(username)) {
+            return "/root";
+        }
+        String home = SystemUtil.getUserInfo().getHomeDir();
+        if (StrUtil.isBlank(home)) {
+            home = System.getProperty("user.home");
+        }
+        return home;
     }
 
     private List<RemoteFileInfo> convertRemoteFileInfo(List<File> files,String userName) {
         List<RemoteFileInfo> fileInfos = new ArrayList<>();
         for (File in : files) {
-            if (!in.getName().startsWith(".")) {
-                RemoteFileInfo fileInfo = new RemoteFileInfo();
-                Path path = Paths.get(in.getAbsolutePath());
-                try {
-                    BasicFileAttributes fileAttributes = Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-                    fileInfo.setFileName(in.getName());
-                    fileInfo.setUserName(userName);
-                    if (SystemUtil.getOsInfo().isLinux()){
-                        Set<PosixFilePermission> posixFilePermissions = Files.getPosixFilePermissions(path);
-                        String perm = getPermissionString(posixFilePermissions);
-                        fileInfo.setPermission(perm);
-                    }
-                    fileInfo.setLastModify(DateUtil.format(new Date(fileAttributes.lastModifiedTime().toMillis()),"yyyy-MM-dd HH:mm:ss"));
-                    if (fileAttributes.size() <= 1024) {
-                        fileInfo.setSize(fileAttributes.size() + "b");
-                    } else if (fileAttributes.size() < 1024 * 1024) {
-                        fileInfo.setSize(fileAttributes.size() / 1024 + "kb");
-                    } else if (fileAttributes.size() < 1024 * 1024 * 1024) {
-                        fileInfo.setSize(fileAttributes.size() / 1024 / 1024 + "mb");
-                    } else {
-                        fileInfo.setSize(fileAttributes.size() / 1024 / 1024 / 1024 + "Gb");
-                    }
-                    fileInfo.setParentPath(in.getParent());
-                    fileInfo.setCurrentDir(in.getPath());
-                    fileInfo.setIsFile(fileAttributes.isRegularFile());
-                    fileInfos.add(fileInfo);
-
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
+            if (in.getName().startsWith(".")) {
+                continue;
+            }
+            RemoteFileInfo fileInfo = new RemoteFileInfo();
+            Path path = Paths.get(in.getAbsolutePath());
+            try {
+                BasicFileAttributes fileAttributes = Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                fileInfo.setFileName(in.getName());
+                fileInfo.setUserName(userName);
+                if (SystemUtil.getOsInfo().isLinux()){
+                    Set<PosixFilePermission> posixFilePermissions = Files.getPosixFilePermissions(path);
+                    String perm = getPermissionString(posixFilePermissions);
+                    fileInfo.setPermission(perm);
                 }
+                fileInfo.setLastModify(DateUtil.format(new Date(fileAttributes.lastModifiedTime().toMillis()),"yyyy-MM-dd HH:mm:ss"));
+                fileInfo.setSize(formatSize(fileAttributes.size()));
+                fileInfo.setParentPath(in.getParent());
+                fileInfo.setCurrentDir(in.getPath());
+                fileInfo.setIsFile(fileAttributes.isRegularFile());
+                fileInfos.add(fileInfo);
+            } catch (IOException e) {
+                // 单个文件读属性失败（断链软链、权限不足）不应该让整个目录列表崩掉
+                log.warn("读取文件属性失败，已跳过：" + in.getAbsolutePath(), e);
             }
         }
         return fileInfos;
+    }
+
+    private String formatSize(long size) {
+        if (size < 1024) {
+            return size + "b";
+        } else if (size < 1024 * 1024) {
+            return size / 1024 + "kb";
+        } else if (size < 1024 * 1024 * 1024) {
+            return size / 1024 / 1024 + "mb";
+        }
+        return size / 1024 / 1024 / 1024 + "Gb";
     }
 
     // [OWNER_WRITE, GROUP_WRITE, OTHERS_EXECUTE, OTHERS_READ, OWNER_READ, GROUP_READ, GROUP_EXECUTE, OWNER_EXECUTE]
@@ -261,17 +280,14 @@ public class LocalFileMgmtComponent extends CommonComponent {
     @Override
     public void registerHandler() {
         backBtn.addClickListener(e -> {
-            if (pathList.size() > 1) {
-                pathList.removeLast();
-                String prePath = pathList.peekLast();
-                initGridContent(prePath);
-                pathLb.setValue(prePath);
+            if (pathList.size() <= 1) {
+                Notification.show("已经是顶层目录", Notification.Type.HUMANIZED_MESSAGE);
+                return;
             }
-            if (pathList.size() == 1) {
-                String prePath = pathList.peekLast();
-                initGridContent(prePath);
-                pathLb.setValue(prePath);
-            }
+            pathList.removeLast();
+            String prePath = pathList.peekLast();
+            loadDir(prePath);
+            pathLb.setValue(prePath);
         });
     }
 

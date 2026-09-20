@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.vaadin.addons.ComboBoxMultiselect;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -162,20 +163,28 @@ public class UserManagementComponent extends CommonComponent {
 					Notification.show("未选择用户", Notification.Type.WARNING_MESSAGE);
 					return;
 				}
-				boolean flag = false;
+				Set<String> idsToRemove = new HashSet<String>();
 				for (User user : selectedItems) {
-					List<String> allUser = Util.getUsersAsLine();
-					for (String id : allUser) {
-						if (id.contains("=") && id.split("=")[0].equals(user.getUserId())) {
-							allUser.remove(id);
-							flag = true;
-							break;
-						}
+					idsToRemove.add(user.getUserId());
+				}
+				// 原实现在 for-each 里直接 allUser.remove(id)，必然抛
+				// ConcurrentModificationException；这里改成重建一个新列表
+				List<String> allUser = Util.getUsersAsLine();
+				List<String> remainUsers = new ArrayList<String>();
+				boolean flag = false;
+				for (String line : allUser) {
+					int index = line.indexOf('=');
+					if (index > 0 && idsToRemove.contains(line.substring(0, index).trim())) {
+						flag = true;
+						continue;
 					}
-					if (flag) {
-						Util.saveUsers(allUser);
-						Notification.show("删除成功", Notification.Type.WARNING_MESSAGE);
-					}
+					remainUsers.add(line);
+				}
+				if (flag) {
+					Util.saveUsers(remainUsers);
+					Notification.show("删除成功", Notification.Type.WARNING_MESSAGE);
+				} else {
+					Notification.show("该用户在配置文件中不存在，无需删除", Notification.Type.WARNING_MESSAGE);
 				}
 				initContentTable();
 			}

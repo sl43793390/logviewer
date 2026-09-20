@@ -1,5 +1,6 @@
 package com.so.util;
 
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.NoSuchProviderException;
@@ -80,7 +81,9 @@ public class EncryptionUtils {
 	private static String getDigest(String algorithm, String message) throws NoSuchAlgorithmException, NoSuchProviderException {
 		 MessageDigest messageDigest = MessageDigest.getInstance(algorithm, SECURITY_PROVIDER_BOUNCY_CASTLE);
 		 messageDigest.reset();
-		 messageDigest.update(message.getBytes());
+		 // 必须固定字符集：getBytes() 用平台默认编码，同一串中文在 Windows(GBK) 和 Linux(UTF-8)
+		 // 上算出来的摘要不一致，登录校验类场景会直接失效
+		 messageDigest.update(message.getBytes(StandardCharsets.UTF_8));
 		
 		return Hex.toHexString(messageDigest.digest());
 	}

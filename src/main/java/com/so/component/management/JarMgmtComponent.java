@@ -118,43 +118,38 @@ public class JarMgmtComponent extends CommonComponent {
 					checkAddShell(p);
 					if (StringUtils.isNotBlank(p.getJvmParam()) || StringUtils.isNotBlank(p.getJarParam())) {
 						log.info("使用默认命令启动jar包,带用户指定参数");
-						// Util.executeSellScript("sh server.sh start " + p.getNameProject(), p.getCdParentPath());
 						Notification.show("正在启动中，请稍候......", Notification.Type.WARNING_MESSAGE);
+						final String cmd = buildStartCommand(p);
+						final String parentPath = p.getCdParentPath();
+						log.info("执行命令：" + cmd);
 						new Thread(new Runnable() {
 							@Override
 							public void run() {
-								// TODO Auto-generated method stub
-								if (null != p.getJvmParam() && null != p.getJarParam()) {
-									String cmd = "nohup java -jar "+p.getJvmParam().trim() + " " + p.getNameProject() +  " " +p.getJarParam() +" 2>&1 > app.log &";
-									log.info("执行命令："+cmd);
-									Util.executeNewFlow(Arrays.asList("cd " + p.getCdParentPath(),cmd));
-								}else if(StringUtils.isNotBlank(p.getJvmParam())){
-									String cmd = "nohup java -jar "+p.getJvmParam().trim() +  " " +p.getNameProject() +" 2>&1 > app.log &";
-									log.info("执行命令："+cmd);
-									Util.executeNewFlow(Arrays.asList("cd " + p.getCdParentPath(),cmd));
-								}else if (StringUtils.isNotBlank(p.getJarParam())) {
-									String cmd = "nohup java -jar "+ p.getNameProject().trim() +" 2>&1 > app.log &";
-									log.info("执行命令："+cmd);
-									Util.executeNewFlow(Arrays.asList("cd " + p.getCdParentPath(),cmd));
-								}
+								List<String> cmdRes = Util.executeNewFlow(Arrays.asList("cd " + parentPath, cmd));
+								log.info(String.valueOf(cmdRes));
 							}
 						}).start();
 					} else if (StrUtil.isNotBlank(p.getCdCommand())) {
 						log.info("使用自定义的命令启动jar包");
+						final String parentPath = p.getCdParentPath();
+						final String customCmd = p.getCdCommand();
 						new Thread(new Runnable() {
 							@Override
 							public void run() {
-								List<String> executeNewFlow = Util.executeNewFlow(Arrays.asList("cd " + p.getCdParentPath(),p.getCdCommand()));
-								log.info(executeNewFlow.toString());
+								List<String> executeNewFlow = Util.executeNewFlow(Arrays.asList("cd " + parentPath, customCmd));
+								log.info(String.valueOf(executeNewFlow));
 							}
 						}).start();
 					} else {
 						//命令和参数均未配置使用默认脚本启动
+						final String parentPath = p.getCdParentPath();
+						final String projectName = p.getNameProject();
 						new Thread(new Runnable() {
 							@Override
 							public void run() {
-								List<String> lres = Util.executeNewFlow(Arrays.asList("cd " + p.getCdParentPath(),"chmod 777 server.sh;sh server.sh start "+p.getNameProject()));
-								log.info(lres.toString());
+								List<String> lres = Util.executeNewFlow(Arrays.asList("cd " + parentPath,
+										"chmod 777 server.sh;sh server.sh start " + projectName));
+								log.info(String.valueOf(lres));
 							}
 						}).start();
 					}
@@ -232,7 +227,10 @@ public class JarMgmtComponent extends CommonComponent {
 							map.put("id_host", p.getIdHost());
 							map.put("id_project",p.getIdProject());
 							projectsMapper.deleteByMap(map);
-							grid.setItems(projectsMapper.selectList(new QueryWrapper<ProjectList>()));
+							// 刷新时保持 id_host 过滤，否则会把远程主机的项目也查出来
+							QueryWrapper<ProjectList> reloadWrapper = new QueryWrapper<ProjectList>();
+							reloadWrapper.eq("id_host", p.getIdHost());
+							grid.setItems(projectsMapper.selectList(reloadWrapper));
 						}
 
 						@Override
@@ -285,6 +283,27 @@ public class JarMgmtComponent extends CommonComponent {
 		}).setCaption("上传jar包/脚本");
 	}
 
+	/**
+	 * 拼装默认的 jar 启动命令。
+	 * <p>
+	 * 注意两个容易踩的坑：<br>
+	 * 1. JVM 参数必须写在 -jar 之前，否则会被 java 当成程序参数传给 main，JVM 选项不生效；<br>
+	 * 2. 重定向顺序必须是 {@code > app.log 2>&1}，写成 {@code 2>&1 > app.log} 时
+	 * stderr 仍指向旧的控制台，异常堆栈不会进日志文件。
+	 */
+	private String buildStartCommand(ProjectList p) {
+		StringBuilder sb = new StringBuilder("nohup java");
+		if (StringUtils.isNotBlank(p.getJvmParam())) {
+			sb.append(" ").append(p.getJvmParam().trim());
+		}
+		sb.append(" -jar ").append(StrUtil.nullToEmpty(p.getNameProject()).trim());
+		if (StringUtils.isNotBlank(p.getJarParam())) {
+			sb.append(" ").append(p.getJarParam().trim());
+		}
+		sb.append(" > app.log 2>&1 &");
+		return sb.toString();
+	}
+
 	private void checkAddShell(ProjectList p) {
 		String path = p.getCdParentPath()+File.separator+"server.sh";
 		log.info(path);
@@ -303,20 +322,26 @@ public class JarMgmtComponent extends CommonComponent {
 	private void saveOrUpdateProject(boolean update) {
 
 		ProjectList pro = new ProjectList();
-		if (idProjectField.getValue() == null || pathField.getValue() == null) {
+		// TextField 空值是 ""，用 null 判断挡不住空提交
+		if (StrUtil.isBlank(idProjectField.getValue()) || StrUtil.isBlank(pathField.getValue())) {
 			Notification.show("项目ID、项目所在路径不能为空！", Notification.Type.WARNING_MESSAGE);
 			return;
 		}
 		pro.setIdHost("localhost");
-		pro.setIdProject(idProjectField.getValue());
+		pro.setIdProject(idProjectField.getValue().trim());
 		pro.setNameProject(nameProjectField.getValue());
-		pro.setCdParentPath(pathField.getValue());
+		pro.setCdParentPath(pathField.getValue().trim());
 		pro.setCdTag(classField.getValue());
 		pro.setCdCommand(startField.getValue());
 		pro.setJvmParam(jvmParam.getValue());
 		pro.setJarParam(jarParam.getValue());
 		pro.setCdDescription(descField.getValue());
 		if (update) {
+			// update=true 走的是「新增」分支，需先判断主键是否重复，否则会直接抛主键冲突
+			if (projectsMapper.selectById(pro.getIdProject()) != null) {
+				Notification.show("项目ID不能重复！", Notification.Type.WARNING_MESSAGE);
+				return;
+			}
 			projectsMapper.insert(pro);
 		} else {
 			UpdateWrapper<ProjectList> up = new UpdateWrapper<ProjectList>();
@@ -379,6 +404,10 @@ public class JarMgmtComponent extends CommonComponent {
 
 		if (!update) {
 			ProjectList p = projectsMapper.selectById(idProject);
+			if (null == p) {
+				Notification.show("未找到该项目，可能已被删除", Notification.Type.ERROR_MESSAGE);
+				return;
+			}
 			idProjectField.setValue(p.getIdProject());
 			nameProjectField.setValue(p.getNameProject() == null ? "" : p.getNameProject());
 			idProjectField.setEnabled(false);
@@ -410,17 +439,20 @@ public class JarMgmtComponent extends CommonComponent {
 		searchBtn.addClickListener(e ->{
 			String name = nameField.getValue();
 			String tag = tagfield.getValue();
-			if (null == name && tag == null) {
-				Notification.show("请输入搜索条件", Notification.Type.WARNING_MESSAGE);
+			// TextField 空值返回的是 ""，不是 null；原来的 null 判断永远不会成立，提示语是死代码
+			if (StrUtil.isEmpty(name) && StrUtil.isEmpty(tag)) {
+				QueryWrapper<ProjectList> queryAll = new QueryWrapper<ProjectList>();
+				queryAll.eq("id_host", "localhost");
+				grid.setItems(projectsMapper.selectList(queryAll));
 				return;
 			}
 			QueryWrapper<ProjectList> query = new QueryWrapper<ProjectList>();
 			query.eq("id_host", "localhost");
-			if (null != name) {
-				query.like("name_project", name);
+			if (StrUtil.isNotEmpty(name)) {
+				query.like("name_project", name.trim());
 			}
-			if (null != tag) {
-				query.like("cd_tag", tag);
+			if (StrUtil.isNotEmpty(tag)) {
+				query.like("cd_tag", tag.trim());
 			}
 			List<ProjectList> selectByMap = projectsMapper.selectList(query);
 			grid.setItems(selectByMap);

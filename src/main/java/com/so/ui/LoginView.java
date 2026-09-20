@@ -1,11 +1,5 @@
 package com.so.ui;
 
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.util.ArrayList;
-import java.util.HashMap;
-
 import javax.sql.DataSource;
 
 import com.so.util.Constants;
@@ -38,8 +32,7 @@ import com.vaadin.ui.TextField;
 import com.vaadin.ui.UI;
 import com.vaadin.ui.VerticalLayout;
 
-import cn.hutool.core.io.FileUtil;
-import cn.hutool.core.io.IoUtil;
+import cn.hutool.core.util.StrUtil;
 
 @UIScope
 @SpringView(name = "loginView")
@@ -160,24 +153,20 @@ public class LoginView extends VerticalLayout implements View {
 		public void buttonClick(ClickEvent event) {
 			String userName = userFld.getValue();
 			String pwd = pwdFld.getValue();
-			if (null != userName && null != pwd) {
-//				HashMap<String, String> users = (HashMap) ComponentUtil.applicationContext.getBean("userList");
-				User user = userDao.selectById(userName);
-				if (null != user && user.getPassword().equals(Util.getSm3DigestStr(pwd))) {
-					VaadinSession.getCurrent().setAttribute("userName", userName);
-					VaadinSession.getCurrent().setAttribute("user",user);
-					UI.getCurrent().getNavigator().navigateTo("logCheckView");
-					logger.info("用户{}登录成功", userName);
-				} else {
-					Notification.show("用户名或密码错误", Notification.Type.WARNING_MESSAGE);
-					return;
-				}
-			} else {
+			if (StrUtil.isBlank(userName) || StrUtil.isBlank(pwd)) {
 				Notification.show("用户名或密码不能为空", Notification.Type.WARNING_MESSAGE);
 				return;
 			}
-//			 UI.getCurrent().getNavigator().navigateTo("logCheckView");
-
+			User user = userDao.selectById(userName);
+			if (null != user && null != user.getPassword()
+					&& user.getPassword().equals(Util.getSm3DigestStr(pwd))) {
+				VaadinSession.getCurrent().setAttribute("userName", userName);
+				VaadinSession.getCurrent().setAttribute("user", user);
+				UI.getCurrent().getNavigator().navigateTo("logCheckView");
+				logger.info("用户{}登录成功", userName);
+			} else {
+				Notification.show("用户名或密码错误", Notification.Type.WARNING_MESSAGE);
+			}
 		}
 	}
 
@@ -191,27 +180,21 @@ public class LoginView extends VerticalLayout implements View {
 		DataSource dataSource = ComponentUtil.applicationContext.getBean(DataSource.class);
 		try {
 			Integer selectCount = userDao.selectCount(new QueryWrapper<User>());
-			if (null != selectCount && selectCount >0) {
-			}else {
+			if (null == selectCount || selectCount <= 0) {
 				init(dataSource);
 			}
 		} catch (Exception e) {
 			logger.warn("首次启动，进行数据库初始化。。。");
 			init(dataSource);
-		}finally {
-			//检查当前目录是否有server.sh,没有则复制一个
-			String path = System.getProperty("user.dir") + File.separator + "server.sh";
-			File file = new File(path);
-			if (!file.exists()) {
-				ClassPathResource resources = new ClassPathResource("server.sh");
-				try (InputStream in = resources.getInputStream()) {
-					FileUtil.writeFromStream(in, file);
-				} catch (IOException e1) {
-					e1.printStackTrace();
-				}
-			}
+		}
+		// 补齐 server.sh（运行目录 + bin 目录），以 WAR 方式部署时 main 不会执行
+		try {
+			Util.ensureServerScript();
+		} catch (Exception e) {
+			logger.warn("释放 server.sh 失败：{}", e.getMessage());
 		}
 	}
+
 	/**
 	 * 根据初始化sql文件和datasource执行指定的sql。
 	 * @param dataSource
@@ -221,12 +204,10 @@ public class LoginView extends VerticalLayout implements View {
 	        logger.info("数据初始化开始: ");
 	        // 通过直接读取sql文件执行
 	        ClassPathResource resources = new ClassPathResource("demo.sql");
-	    	try (InputStream in = resources.getInputStream()) {
-				ArrayList<String> readLines2 = IoUtil.readLines(in, "UTF-8", new ArrayList<String>());
-			} catch (IOException e1) {
-				e1.printStackTrace();
-			}
-
+	        if (!resources.exists()) {
+	        	logger.error("classpath 下未找到 demo.sql，跳过数据库初始化");
+	        	return;
+	        }
 	        ResourceDatabasePopulator resourceDatabasePopulator = new ResourceDatabasePopulator();
 	        resourceDatabasePopulator.addScripts(resources);
 	        resourceDatabasePopulator.execute(dataSource);
@@ -235,11 +216,17 @@ public class LoginView extends VerticalLayout implements View {
 
 		public static boolean checkPermission(String res){
 			User user = (User)VaadinSession.getCurrent().getAttribute("user");
-			if (null != user.getPermission() && user.getPermission().contains(Constants.ALL)){
-				return true;
+			if (null == user || null == user.getPermission()) {
+				return false;
 			}
-			if (null != user.getPermission() && user.getPermission().contains(res)){
-				return true;
+			String permission = user.getPermission();
+			// 权限串以逗号结尾，用 contains 判断会把 "ADD" 误匹配成 "ADDX"，
+			// 这里按逗号切分后做精确比较
+			for (String item : permission.split(",")) {
+				String trimmed = item.trim();
+				if (Constants.ALL.equals(trimmed) || res.equals(trimmed)) {
+					return true;
+				}
 			}
 			return false;
 		}

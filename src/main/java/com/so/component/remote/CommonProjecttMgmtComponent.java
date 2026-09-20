@@ -23,7 +23,7 @@ import com.so.component.CommonComponent;
 import com.so.component.util.ConfirmationDialogPopupWindow;
 import com.so.component.util.ConfirmationEvent;
 import com.so.component.util.ConfirmationEventListener;
-import com.so.component.util.FileUploader;
+import com.so.component.util.RemoteFileUploader;
 import com.so.entity.ConnectionInfo;
 import com.so.entity.CommonProjectMgmt;
 import com.so.mapper.CommonProjectMgmtMapper;
@@ -46,7 +46,7 @@ public class CommonProjecttMgmtComponent extends CommonComponent {
 	private Panel mainPanel;
 	private VerticalLayout contentLayout;
 
-	public FileUploader loader;
+	public RemoteFileUploader loader;
 	@Autowired
 	private CommonProjectMgmtMapper commonProjectMapper;
 	private TextField scriptPath;
@@ -132,20 +132,20 @@ public class CommonProjecttMgmtComponent extends CommonComponent {
 			Button b = ComponentFactory.getStandardButton("重启");
 			b.addClickListener(e -> {
 				try {
-					if (StrUtil.isNotBlank(p.getCdPath())) {
-						log.info("应用重启路径："+p.getCdPath());
-						List<String> remoteExecute = MyJSchUtil.remoteExecute(jschSession,"source /etc/profile;cd "+p.getCdPath()+";"+p.getCmdRestart());
-						log.info(remoteExecute.toString());
-					}else{
+					// 原来判断的是 cdPath，却提示"未配置重启命令"，字段判断和提示对不上
+					if (StrUtil.isBlank(p.getCmdRestart())) {
 						Notification.show("未配置重启命令，无法执行！", Notification.Type.WARNING_MESSAGE);
 						return;
 					}
+					log.info("应用重启路径："+p.getCdPath());
+					List<String> remoteExecute = MyJSchUtil.remoteExecute(jschSession,"source /etc/profile;cd "+p.getCdPath()+";"+p.getCmdRestart());
+					log.info(remoteExecute.toString());
 				} catch (Exception e1) {
 					e1.printStackTrace();
 					log.error(ExceptionUtils.getStackTrace(e1));
 					Notification.show("重启失败，请注意查看日志或点击状态按钮查看", Notification.Type.WARNING_MESSAGE);
 				}
-				Notification.show("停止命令已经执行，请注意查看日志或点击状态按钮查看", Notification.Type.WARNING_MESSAGE);
+				Notification.show("重启命令已经执行，请注意查看日志或点击状态按钮查看", Notification.Type.WARNING_MESSAGE);
 			});
 			return b;
 		}).setCaption("重启服务");
@@ -153,13 +153,12 @@ public class CommonProjecttMgmtComponent extends CommonComponent {
 			Button b = ComponentFactory.getStandardButton("刷新");
 			b.addClickListener(e -> {
 				try {
-					if (StrUtil.isNotBlank(p.getCdPath())) {
-						List<String> remoteExecute = MyJSchUtil.remoteExecute(jschSession,"source /etc/profile;cd "+p.getCdPath()+";"+p.getCmdRefresh());
-						log.info(remoteExecute.toString());
-					}else{
+					if (StrUtil.isBlank(p.getCmdRefresh())) {
 						Notification.show("未配置刷新命令，无法执行！", Notification.Type.WARNING_MESSAGE);
 						return;
 					}
+					List<String> remoteExecute = MyJSchUtil.remoteExecute(jschSession,"source /etc/profile;cd "+p.getCdPath()+";"+p.getCmdRefresh());
+					log.info(remoteExecute.toString());
 				} catch (Exception e1) {
 					e1.printStackTrace();
 					log.error(ExceptionUtils.getStackTrace(e1));
@@ -177,8 +176,15 @@ public class CommonProjecttMgmtComponent extends CommonComponent {
 					if (StrUtil.isNotEmpty(p.getCmdStatus())){
 						List<String> executeNewFlow = MyJSchUtil.remoteExecute(jschSession,p.getCmdStatus());
 						boolean falg = false;
+						// 原来直接用 getCmdStatusSuccessKey() 参与 contains：
+						// key 未配置时 contains(null) 抛 NPE，key 为空串时 contains("") 恒为 true（永远显示"运行中"）
+						String successKey = p.getCmdStatusSuccessKey();
+						if (StrUtil.isEmpty(successKey)) {
+							Notification.show("未配置状态检查关键字，无法判断运行状态", Notification.Type.WARNING_MESSAGE);
+							return;
+						}
 						for (String res : executeNewFlow) {
-							if (res.contains(p.getCmdStatusSuccessKey())) {
+							if (res.contains(successKey)) {
 								b.setStyleName("projectlist-status-running-button");
 								b.setCaption("运行中");
 								Notification.show("服务运行中", Notification.Type.WARNING_MESSAGE);
@@ -257,12 +263,23 @@ public class CommonProjecttMgmtComponent extends CommonComponent {
 			return b;
 		}).setCaption("修改");
 		grid.addComponentColumn(p -> {
-			loader = new FileUploader();
-			String projectPath = StrUtil.removeSuffix(p.getCdPath(), "/");
-			loader.setParentPath(projectPath);
+			// 远程项目必须走 RemoteFileUploader。原来用本地 FileUploader +
+			// 远端绝对路径当本地路径，FileOutputStream 直接抛 FileNotFoundException，
+			// 上传静默失败（receiveUpload 返回 null）
+			loader = new RemoteFileUploader();
+			loader.setRemoteFlag(true);
+			loader.setSession(jschSession);
+			loader.setAddr(addr);
+			loader.setParentPath(StrUtil.removeSuffix(p.getCdPath(), "/"));
 			loader.setIdProject(p.getIdProject());
 			Upload upload = new Upload("上传", loader);
 			upload.setImmediateMode(true);
+			upload.addStartedListener(event -> {
+				if (!LoginView.checkPermission(Constants.UPLOAD)) {
+					Notification.show("权限不足，请联系管理员", Notification.Type.WARNING_MESSAGE);
+					throw new RuntimeException("权限不足，终止上传");
+				}
+			});
 			upload.setButtonCaption("上传");
 			upload.addStyleName("upload-style-button");
 			upload.setHeight("30px");
@@ -283,11 +300,11 @@ public class CommonProjecttMgmtComponent extends CommonComponent {
 	private void saveOrUpdateProject(boolean update) {
 
 		CommonProjectMgmt pro = new CommonProjectMgmt();
-		if (idProjectField.getValue() == null || scriptPath.getValue() == null) {
+		if (StrUtil.isBlank(idProjectField.getValue()) || StrUtil.isBlank(scriptPath.getValue())) {
 			Notification.show("项目ID、项目所在路径不能为空！", Notification.Type.WARNING_MESSAGE);
 			return;
 		}
-		String id = StringUtils.removeEnd(idProjectField.getValue(), "/");
+		String id = StringUtils.removeEnd(idProjectField.getValue().trim(), "/");
 		pro.setIdProject(id);
 		pro.setIdHost(addr.getIdHost());
 		pro.setNameProject(nameProjectField.getValue());
@@ -387,6 +404,10 @@ public class CommonProjecttMgmtComponent extends CommonComponent {
 			QueryWrapper<CommonProjectMgmt> wrap = new QueryWrapper<CommonProjectMgmt>();
 			wrap.eq("id_host", addr.getIdHost()).eq("id_project",idProject);
 			CommonProjectMgmt p = commonProjectMapper.selectOne(wrap);
+			if (null == p) {
+				Notification.show("未找到该项目，可能已被删除", Notification.Type.ERROR_MESSAGE);
+				return;
+			}
 			idProjectField.setValue(p.getIdProject());
 			nameProjectField.setValue(p.getNameProject() == null ? "" : p.getNameProject());
 			idProjectField.setEnabled(false);

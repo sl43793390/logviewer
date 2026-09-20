@@ -24,7 +24,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Service;
 
-import java.io.File;
 import java.util.Arrays;
 import java.util.List;
 
@@ -171,7 +170,10 @@ public class CommonProjecttMgmtLocal extends CommonComponent {
 					boolean falg = false;
 					String binPath = StrUtil.removeSuffix(p.getCdPath(), "/");
 					for (String res : executeNewFlow) {
-						if (res.contains(p.getCmdStatus())) {
+						// 原判断是 res.contains(p.getCmdStatus())，拿输出和命令本身比，
+						// 结果恒为 false，永远显示"已停止"。改为匹配进程输出里的脚本目录或项目名
+						if (res.contains(binPath)
+								|| (StrUtil.isNotBlank(p.getNameProject()) && res.contains(p.getNameProject()))) {
 							b.setStyleName("projectlist-status-running-button");
 							b.setCaption("运行中");
 							Notification.show("服务运行中", Type.WARNING_MESSAGE);
@@ -233,7 +235,8 @@ public class CommonProjecttMgmtLocal extends CommonComponent {
 			Button b = ComponentFactory.getStandardButton("修改");
 			b.addClickListener(e -> {
 				try {
-					if (!LoginView.checkPermission(Constants.DELETE)){
+					// 修改按钮原来校验的是 DELETE 权限，复制粘贴遗留
+					if (!LoginView.checkPermission(Constants.UPDATE)){
 						Notification.show("权限不足，请联系管理员", Notification.Type.WARNING_MESSAGE);
 						return;
 					}
@@ -247,11 +250,18 @@ public class CommonProjecttMgmtLocal extends CommonComponent {
 		}).setCaption("修改");
 		grid.addComponentColumn(p -> {
 			loader = new FileUploader();
-			String tomPath = StrUtil.removeSuffix(p.getCdPath(), "/");
-			loader.setParentPath(tomPath+File.separator+"webapps");
+			// 通用项目的上传目标就是「脚本存放目录」本身。
+			// 原来拼了个 .../webapps，是从 tomcat 管理页复制过来的，通用项目（如 nginx）没有这个子目录
+			loader.setParentPath(StrUtil.removeSuffix(p.getCdPath(), "/"));
 			loader.setIdProject(p.getIdProject());
 			Upload upload = new Upload("上传", loader);
 			upload.setImmediateMode(true);
+			upload.addStartedListener(event -> {
+				if (!LoginView.checkPermission(Constants.UPLOAD)) {
+					Notification.show("权限不足，请联系管理员", Notification.Type.WARNING_MESSAGE);
+					throw new RuntimeException("权限不足，终止上传");
+				}
+			});
 			upload.setButtonCaption("上传");
 			upload.addStyleName("upload-style-button");
 			upload.setHeight("30px");
@@ -259,7 +269,14 @@ public class CommonProjecttMgmtLocal extends CommonComponent {
 			return upload;
 		}).setCaption("上传文件");
 		Button btn = ComponentFactory.getStandardButton("添加项目");
-		btn.addClickListener(e -> popWindowAddProject(true, null));// false代表修改
+		btn.addClickListener(e -> {
+			// 其它管理页都有新增权限校验，这里原来漏了
+			if (!LoginView.checkPermission(Constants.ADD)) {
+				Notification.show("权限不足，请联系管理员", Type.WARNING_MESSAGE);
+				return;
+			}
+			popWindowAddProject(true, null);// false代表修改
+		});
 		contentLayout.addComponent(btn);
 		contentLayout.addComponent(grid);
 		contentLayout.setComponentAlignment(btn, Alignment.MIDDLE_RIGHT);
@@ -271,11 +288,11 @@ public class CommonProjecttMgmtLocal extends CommonComponent {
 	private void saveOrUpdateProject(boolean update) {
 
 		CommonProjectMgmt pro = new CommonProjectMgmt();
-		if (idProjectField.getValue() == null || scriptPath.getValue() == null) {
+		if (StrUtil.isBlank(idProjectField.getValue()) || StrUtil.isBlank(scriptPath.getValue())) {
 			Notification.show("项目ID、项目所在路径不能为空！", Type.WARNING_MESSAGE);
 			return;
 		}
-		String id = StringUtils.removeEnd(idProjectField.getValue(), "/");
+		String id = StringUtils.removeEnd(idProjectField.getValue().trim(), "/");
 		pro.setIdProject(id);
 		pro.setIdHost("localhost");
 		pro.setNameProject(nameProjectField.getValue());
@@ -365,6 +382,10 @@ public class CommonProjecttMgmtLocal extends CommonComponent {
 			QueryWrapper<CommonProjectMgmt> wrap = new QueryWrapper<CommonProjectMgmt>();
 			wrap.eq("id_host", "localhost").eq("id_project",idProject);
 			CommonProjectMgmt p = commonProjectMapper.selectOne(wrap);
+			if (null == p) {
+				Notification.show("未找到该项目，可能已被删除", Type.ERROR_MESSAGE);
+				return;
+			}
 			idProjectField.setValue(p.getIdProject());
 			nameProjectField.setValue(p.getNameProject() == null ? "" : p.getNameProject());
 			idProjectField.setEnabled(false);

@@ -12,6 +12,7 @@ import com.so.component.remote.RemoteLogSearchComponent;
 import com.so.component.RemoteSSHComponent;
 import com.so.component.management.UserGuideComponent;
 import com.so.component.remote.RemoteAppManagement;
+import com.so.component.util.TabSheetUtil;
 import com.vaadin.navigator.View;
 import com.vaadin.navigator.ViewChangeListener.ViewChangeEvent;
 import com.vaadin.server.Page;
@@ -106,10 +107,11 @@ public class LogCheckView extends VerticalLayout implements View {
 
 			@Override
 			public void menuSelected(MenuItem selectedItem) {
-//				if (TabSheetUtil.checkComponent(title)) {//检查如果有该tab 则直接选中
-//					TabSheetUtil.selectTargetTab(title);
-//					return;
-//				}
+				// 同一个功能重复点击时直接切回已有 tab，避免开出多个同内容标签页
+				if (TabSheetUtil.checkComponent(title)) {
+					TabSheetUtil.selectTargetTab(title);
+					return;
+				}
 				CommonComponent createComponentUseClassName = ComponentUtil.createComponentUseClassName(calssName);
 				createComponentUseClassName.initLayout();
 				createComponentUseClassName.initContent();
@@ -178,7 +180,7 @@ public class LogCheckView extends VerticalLayout implements View {
 		userNameLb.setWidth("90px");
 		Image img = new Image("", new ThemeResource("img/user.png"));
 		cssl.addComponent(img, "right:180px;top:10px;");
-		cssl.addComponent(userNameLb, "right:75x;top:7px;");
+		cssl.addComponent(userNameLb, "right:75px;top:7px;");
 		cssl.addComponent(exitBtn, "right:10px;top:8px;");
 		Label lb2 = ComponentFactory.getStandardLabel("欢迎...");
 		cssl.addComponent(lb2, "left:10px;top:5px;");

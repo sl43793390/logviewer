@@ -244,14 +244,14 @@ public class TomcatListComponent extends CommonComponent {
 	private void saveOrUpdateProject(boolean update) {
 
 		TomcatInfoEntity pro = new TomcatInfoEntity();
-		if (idProjectField.getValue() == null || tomcatPath.getValue() == null) {
+		if (StrUtil.isBlank(idProjectField.getValue()) || StrUtil.isBlank(tomcatPath.getValue())) {
 			Notification.show("项目ID、项目所在路径不能为空！", Notification.Type.WARNING_MESSAGE);
 			return;
 		}
 		pro.setIdHost(LOCALHOST);
-		pro.setTomcatId(idProjectField.getValue());
+		pro.setTomcatId(idProjectField.getValue().trim());
 		pro.setNameTomcat(nameProjectField.getValue());
-		pro.setTomcatPath(tomcatPath.getValue());
+		pro.setTomcatPath(tomcatPath.getValue().trim());
 		pro.setTag(classField.getValue());
 		pro.setWebappPath(webappField.getValue());
 		pro.setCdDescription(descField.getValue());

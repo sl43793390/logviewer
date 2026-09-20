@@ -129,37 +129,14 @@ public class RemoteJarMgmtComponent extends CommonComponent {
 						new Thread(new Runnable() {
 							@Override
 							public void run() {
-								if (null != p.getJvmParam() && null != p.getJarParam()) {
-									String cmd = "source /etc/profile;nohup java -jar "+p.getJvmParam().trim() + " " + p.getNameProject() +  " " +p.getJarParam() +" 2>&1 > app.log &";
-									log.info("执行命令："+cmd);
-									try {
-										List<String> remoteExecute = MyJSchUtil.remoteExecute(jschSession, "cd " + p.getCdParentPath()+";"+cmd);
-										log.info(remoteExecute.toString());
-									} catch (JSchException e) {
-										log.error(ExceptionUtils.getStackTrace(e));
-										Notification.show("启动失败，请前往查看日志信息",Notification.Type.ERROR_MESSAGE);
-									}
-								}else if(StringUtils.isNotBlank(p.getJvmParam())){
-									String cmd = "source /etc/profile;nohup java -jar "+p.getJvmParam().trim() +  " " +p.getNameProject() +" 2>&1 > app.log &";
-									log.info("执行命令："+cmd);
-									try {
-										List<String> remoteExecute = MyJSchUtil.remoteExecute(jschSession, "cd " + p.getCdParentPath()+";"+cmd);
-										log.info(remoteExecute.toString());
-									} catch (JSchException e) {
-										log.error(ExceptionUtils.getStackTrace(e));
-										Notification.show("启动失败，请前往查看日志信息",Notification.Type.ERROR_MESSAGE);
-									}
-//									Util.executeNewFlow(Arrays.asList("cd " + p.getCdParentPath(),cmd));
-								}else if (StringUtils.isNotBlank(p.getJarParam())) {
-									String cmd = "source /etc/profile;nohup java -jar "+ p.getNameProject().trim() +" 2>&1 > app.log &";
-									log.info("执行命令："+cmd);
-									try {
-										List<String> remoteExecute = MyJSchUtil.remoteExecute(jschSession, "cd " + p.getCdParentPath()+";"+cmd);
-										log.info(remoteExecute.toString());
-									} catch (JSchException e) {
-										log.error(ExceptionUtils.getStackTrace(e));
-										Notification.show("启动失败，请前往查看日志信息",Notification.Type.ERROR_MESSAGE);
-									}
+								String cmd = "source /etc/profile;" + buildStartCommand(p);
+								log.info("执行命令：" + cmd);
+								try {
+									List<String> remoteExecute = MyJSchUtil.remoteExecute(jschSession, "cd " + p.getCdParentPath() + ";" + cmd);
+									log.info(String.valueOf(remoteExecute));
+								} catch (JSchException e) {
+									log.error(ExceptionUtils.getStackTrace(e));
+									Notification.show("启动失败，请前往查看日志信息", Notification.Type.ERROR_MESSAGE);
 								}
 							}
 						}).start();
@@ -249,12 +226,13 @@ public class RemoteJarMgmtComponent extends CommonComponent {
 						Notification.show("服务已经停止，请注意查看日志", Notification.Type.WARNING_MESSAGE);
 					}
 				} catch (Exception e1) {
-					if (e1.getMessage().contains("Connection")){
+					// getMessage() 可能为 null，直接 .contains 会再抛一次 NPE
+					if (StringUtils.contains(e1.getMessage(), "Connection")){
 						Notification.show("无法连接服务器，请使用客户端登录检查！", Notification.Type.WARNING_MESSAGE);
 					}else{
 						Notification.show("查看状态失败，请注意查看日志", Notification.Type.WARNING_MESSAGE);
 					}
-					e1.printStackTrace();
+					log.error(ExceptionUtils.getStackTrace(e1));
 				}
 			});
 			return b;
@@ -275,7 +253,10 @@ public class RemoteJarMgmtComponent extends CommonComponent {
 							map.put("id_host", p.getIdHost());
 							map.put("id_project",p.getIdProject());
 							projectsMapper.deleteByMap(map);
-							grid.setItems(projectsMapper.selectList(new QueryWrapper<ProjectList>()));
+							// 刷新时保持 id_host 过滤，否则会把其它主机的项目也查出来
+							QueryWrapper<ProjectList> reloadWrapper = new QueryWrapper<ProjectList>();
+							reloadWrapper.eq("id_host", p.getIdHost());
+							grid.setItems(projectsMapper.selectList(reloadWrapper));
 						}
 						@Override
 						protected void rejected(ConfirmationEvent event) {
@@ -358,28 +339,53 @@ public class RemoteJarMgmtComponent extends CommonComponent {
 //		}
 //	}
 
+	/**
+	 * 拼装默认的 jar 启动命令。
+	 * <p>
+	 * 原实现有两处硬错：JVM 参数被写在 -jar 之后（会被当成程序参数传给 main，JVM 选项不生效），
+	 * 以及重定向写成 {@code 2>&1 > app.log}（stderr 仍指向控制台，异常堆栈进不了 app.log）；
+	 * 另外「只填了 jar 参数」的分支把 jarParam 直接丢了。
+	 */
+	private String buildStartCommand(ProjectList p) {
+		StringBuilder sb = new StringBuilder("nohup java");
+		if (StringUtils.isNotBlank(p.getJvmParam())) {
+			sb.append(" ").append(p.getJvmParam().trim());
+		}
+		sb.append(" -jar ").append(StrUtil.nullToEmpty(p.getNameProject()).trim());
+		if (StringUtils.isNotBlank(p.getJarParam())) {
+			sb.append(" ").append(p.getJarParam().trim());
+		}
+		sb.append(" > app.log 2>&1 &");
+		return sb.toString();
+	}
+
 	private void saveOrUpdateProject(boolean update) {
 
 		ProjectList pro = new ProjectList();
-		if (idProjectField.getValue() == null || pathField.getValue() == null) {
+		if (StrUtil.isBlank(idProjectField.getValue()) || StrUtil.isBlank(pathField.getValue())) {
 			Notification.show("项目ID、项目所在路径不能为空！", Notification.Type.WARNING_MESSAGE);
 			return;
 		}
 		pro.setIdHost(addr.getIdHost());
-		String id = StringUtils.removeEnd(idProjectField.getValue(), "/");
+		String id = StringUtils.removeEnd(idProjectField.getValue().trim(), "/");
 		pro.setIdProject(id);
 		pro.setNameProject(nameProjectField.getValue());
-		pro.setCdParentPath(pathField.getValue());
+		pro.setCdParentPath(pathField.getValue().trim());
 		pro.setCdTag(classField.getValue());
-		if (StrUtil.isNotEmpty(startField.getValue()) && !startField.getValue().startsWith("nohup")){
-			Notification.show("为避免将被启动的jar包的全部日志都打印到本地，建议增加nohup在后台启动！", Notification.Type.WARNING_MESSAGE);
-			return;
+		// 启动命令允许为空（为空时走默认 server.sh）。
+		// 原实现在命令为空时仍然调用 startField.getValue().endsWith("&")，必然 NPE。
+		String startCmd = startField.getValue();
+		if (StrUtil.isNotBlank(startCmd)) {
+			String trimmed = startCmd.trim();
+			if (!trimmed.startsWith("nohup") || !trimmed.endsWith("&")) {
+				Notification.show("为避免将被启动的jar包的全部日志都打印到本地，建议使用nohup后台启动并以&结尾！",
+						Notification.Type.WARNING_MESSAGE);
+				return;
+			}
+			pro.setCdCommand(trimmed);
+		} else {
+			pro.setCdCommand(null);
 		}
-		if (!startField.getValue().endsWith("&")){
-			Notification.show("为避免将被启动的jar包的全部日志都打印到本地，建议在后台启动增加&！", Notification.Type.WARNING_MESSAGE);
-			return;
-		}
-		pro.setCdCommand(startField.getValue());
 		pro.setJvmParam(jvmParam.getValue());
 		pro.setJarParam(jarParam.getValue());
 		pro.setCdDescription(descField.getValue());
@@ -461,6 +467,10 @@ public class RemoteJarMgmtComponent extends CommonComponent {
 			QueryWrapper<ProjectList> queryWrapper = new QueryWrapper<ProjectList>();
 			queryWrapper.eq("id_host", addr.getIdHost()).eq("id_project",idProject);
 			ProjectList p = projectsMapper.selectOne(queryWrapper);
+			if (null == p) {
+				Notification.show("未找到该项目，可能已被删除", Notification.Type.ERROR_MESSAGE);
+				return;
+			}
 			idProjectField.setValue(p.getIdProject());
 			nameProjectField.setValue(p.getNameProject() == null ? "" : p.getNameProject());
 			idProjectField.setEnabled(false);
@@ -492,18 +502,14 @@ public class RemoteJarMgmtComponent extends CommonComponent {
 		searchBtn.addClickListener(e ->{
 			String name = nameField.getValue();
 			String tag = tagfield.getValue();
-			if (null == name && tag == null) {
-				List<ProjectList> selectByMap = projectsMapper.selectList(new QueryWrapper<>());
-				grid.setItems(selectByMap);
-				return;
-			}
+			// TextField 空值是 ""，用 null 判断会让「空条件」走进全库查询分支，把别的主机的项目也列出来
 			QueryWrapper<ProjectList> query = new QueryWrapper<ProjectList>();
 			query.eq("id_host", addr.getIdHost());
-			if (null != name) {
-				query.like("name_project", name);
+			if (StrUtil.isNotEmpty(name)) {
+				query.like("name_project", name.trim());
 			}
-			if (null != tag) {
-				query.like("cd_tag", tag);
+			if (StrUtil.isNotEmpty(tag)) {
+				query.like("cd_tag", tag.trim());
 			}
 			List<ProjectList> selectByMap = projectsMapper.selectList(query);
 			grid.setItems(selectByMap);

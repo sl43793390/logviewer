@@ -7,11 +7,9 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.HashMap;
-import java.util.concurrent.TimeUnit;
 
 import com.so.component.CommonComponent;
 import com.vaadin.ui.*;
-import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -40,7 +38,8 @@ public class RemoteFileUploader implements Receiver, SucceededListener, FailedLi
 	private boolean remoteFlag;
 	private ConnectionInfo addr;
 	private CommonComponent component;
-	private static volatile boolean uploadLocalEnd = false;
+	/** 是否顺带把 server.sh 部署到目标目录（上传 war 包到 tomcat webapps 时不需要） */
+	private boolean uploadServerScript = true;
 	private Session session;
 	
 	private static final Logger log = LoggerFactory.getLogger(RemoteFileUploader.class);
@@ -78,97 +77,109 @@ public class RemoteFileUploader implements Receiver, SucceededListener, FailedLi
 
 	@Override
 	public void uploadSucceeded(SucceededEvent event) {
-		ProjectsMapper projectsMapper = ComponentUtil.applicationContext.getBean(ProjectsMapper.class);
-		try {
-			QueryWrapper<ProjectList> queryWrapper = new QueryWrapper<ProjectList>();
-			queryWrapper.eq("id_host", addr.getIdHost()).eq("id_project",idProject);
-			ProjectList selectById = projectsMapper.selectOne(queryWrapper);
-			if (file.getName().endsWith("jar")) {
-				selectById.setJarName(file.getName());
-				UpdateWrapper<ProjectList> up = new UpdateWrapper<ProjectList>();
-				HashMap<String, String> map = new HashMap<String, String>();
-				map.put("id_host", addr.getIdHost());
-				map.put("id_project", idProject);
-				up.allEq(map);
-				projectsMapper.update(selectById, up);
-			}
-			if (null != component){
-				component.initLayout();
-				component.initContent();
-				component.registerHandler();
-			}
-		} catch (Exception e1) {
-			e1.printStackTrace();
-			log.error(ExceptionUtils.getStackTrace(e1));
+		// 数据回写 + 界面刷新必须在 Vaadin 请求线程里做
+		updateProjectJarName();
+		if (null != component){
+			component.initLayout();
+			component.initContent();
+			component.registerHandler();
 		}
-		Notification.show("提示：", "上传文件成功", Notification.Type.WARNING_MESSAGE);
-		uploadLocalEnd = true;
-		log.info("上传成功");
-		//判断：如果是远程上传则现将文件上传到本地机器当前工作目录下，然后再启动一个线程等待文件上传完成后，将文件发送到远程机器，成功后将本地文件删除。
-		if (remoteFlag) {
-//			new Thread( new Runnable() {
-//				@Override
-//				public void run() {
-					try {
-						TimeUnit.SECONDS.sleep(3);
-							if (uploadLocalEnd) {
-								FileInputStream in = null;
-								try {
-									in = new FileInputStream(file);
-									MyJSchUtil.uploadFile(session, in, parentPath, file.getName());
-									MyJSchUtil.uploadFile(session,new FileInputStream(new File(System.getProperty("user.dir")+ File.separator + "bin" +File.separator+"server.sh")),parentPath, "server.sh");
-//									JSchUtil.uploadFile(session, file, parentPath);
-//									JSchUtil.scpTo2(session, keypath, parentPath);
-									log.info("远程文件上传成功=====");
-								} catch (Exception e) {
-									log.info("远程文件上传失败=====");
-									e.printStackTrace();
-									log.error(ExceptionUtils.getStackTrace(e));
-								}finally {
-									try {
-										file.delete();
-										if (null != in) {
-											in.close();
-										}
-									} catch (IOException e) {
-										e.printStackTrace();
-									}
-								}
-							}else {
-								log.info("等待1秒后检查是否本地上传成功。。。");
-								TimeUnit.SECONDS.sleep(1);
-							}
-					} catch (InterruptedException e) {
-						e.printStackTrace();
-					}
-//				}
-//			}).start();
+		if (!remoteFlag) {
+			Notification.show("提示：", "上传文件成功", Notification.Type.WARNING_MESSAGE);
+			log.info("上传成功");
+			return;
 		}
-//	上传server.sh脚本
-		if (remoteFlag) {
-			try {
-				TimeUnit.SECONDS.sleep(1);
-					FileInputStream in = null;
-					try {
-						in = new FileInputStream(new File(System.getProperty("user.dir")+ File.separator + "bin" +File.separator+"server.sh"));
-						MyJSchUtil.uploadFile(session,in,parentPath, "server.sh");
-						MyJSchUtil.remoteExecute(session,"chmod 777 "+parentPath +File.separator+"server.sh");
-						log.info("远程脚本上传成功=====");
-					} catch (Exception e) {
-						log.info("远程文件上传失败=====");
-						log.error(ExceptionUtils.getStackTrace(e));
-					}finally {
-						try {
-							if (null != in) {
-								in.close();
-							}
-						} catch (IOException e) {
-							e.printStackTrace();
+		// 传输是纯网络 IO。原实现直接在这里 sleep(4s) 再同步 SFTP，
+		// 整个请求线程（含会话锁）被占住 4 秒以上，页面全卡死。改为后台线程，
+		// 完成后再通过 UI.access 回到 UI 线程给出结果提示。
+		final UI ui = UI.getCurrent();
+		final File localFile = file;
+		final String remoteDir = parentPath;
+		Notification.show("提示：", "文件已接收，正在上传到远程服务器，请稍候……", Notification.Type.WARNING_MESSAGE);
+		new Thread(new Runnable() {
+			@Override
+			public void run() {
+				boolean success = false;
+				String failReason = null;
+				try {
+					try (FileInputStream in = new FileInputStream(localFile)) {
+						if (!MyJSchUtil.uploadFile(session, in, remoteDir, localFile.getName())) {
+							throw new IOException("SFTP 上传返回失败：" + remoteDir + "/" + localFile.getName());
 						}
+					}
+					if (uploadServerScript) {
+						File script = new File(System.getProperty("user.dir") + File.separator + "bin" + File.separator + "server.sh");
+						if (!script.exists()) {
+							throw new IOException("本地脚本不存在：" + script.getAbsolutePath());
+						}
+						try (FileInputStream in = new FileInputStream(script)) {
+							if (!MyJSchUtil.uploadFile(session, in, remoteDir, "server.sh")) {
+								throw new IOException("SFTP 上传 server.sh 失败");
+							}
+						}
+						// parentPath 是远端 Linux 路径，必须用 "/" 拼接。
+						// 原来的 File.separator 在 Windows 上会拼出 /home/app\server.sh
+						MyJSchUtil.remoteExecute(session, "chmod 777 " + remoteDir + "/server.sh");
+					}
+					success = true;
+					log.info("远程文件上传成功=====");
+				} catch (Exception e) {
+					failReason = e.getMessage();
+					log.error("远程文件上传失败=====", e);
+				} finally {
+					if (!localFile.delete()) {
+						log.warn("本地临时文件删除失败：{}", localFile.getAbsolutePath());
+					}
+					final boolean ok = success;
+					final String reason = failReason;
+					if (null != ui) {
+						ui.access(new Runnable() {
+							@Override
+							public void run() {
+								if (ok) {
+									Notification.show("提示：", "已上传到远程服务器", Notification.Type.HUMANIZED_MESSAGE);
+								} else {
+									Notification.show("提示：", "上传到远程服务器失败：" + reason,
+											Notification.Type.ERROR_MESSAGE);
+								}
+							}
+						});
+					}
 				}
-			} catch (InterruptedException e) {
-				e.printStackTrace();
 			}
+		}, "remote-upload-" + localFile.getName()).start();
+	}
+
+	/**
+	 * 把上传的 jar 包名回写到 project_list。<br>
+	 * 查不到记录（例如 tomcat 管理的项目不在 project_list 里）时跳过，
+	 * 原来的 {@code selectById.setJarName(...)} 会直接抛 NPE。
+	 */
+	private void updateProjectJarName() {
+		if (null == file || null == idProject || null == addr) {
+			return;
+		}
+		if (!file.getName().endsWith("jar")) {
+			return;
+		}
+		try {
+			ProjectsMapper projectsMapper = ComponentUtil.applicationContext.getBean(ProjectsMapper.class);
+			QueryWrapper<ProjectList> queryWrapper = new QueryWrapper<ProjectList>();
+			queryWrapper.eq("id_host", addr.getIdHost()).eq("id_project", idProject);
+			ProjectList selectById = projectsMapper.selectOne(queryWrapper);
+			if (null == selectById) {
+				log.warn("项目表中未找到 id_host={} id_project={} 的记录，跳过 jar 名称回写", addr.getIdHost(), idProject);
+				return;
+			}
+			selectById.setJarName(file.getName());
+			UpdateWrapper<ProjectList> up = new UpdateWrapper<ProjectList>();
+			HashMap<String, String> map = new HashMap<String, String>();
+			map.put("id_host", addr.getIdHost());
+			map.put("id_project", idProject);
+			up.allEq(map);
+			projectsMapper.update(selectById, up);
+		} catch (Exception e1) {
+			log.error("回写 jar 名称失败", e1);
 		}
 	}
 
@@ -218,6 +229,14 @@ public class RemoteFileUploader implements Receiver, SucceededListener, FailedLi
 
 	public void setSession(Session session) {
 		this.session = session;
+	}
+
+	public boolean isUploadServerScript() {
+		return uploadServerScript;
+	}
+
+	public void setUploadServerScript(boolean uploadServerScript) {
+		this.uploadServerScript = uploadServerScript;
 	}
 
 	public ConnectionInfo getAddr() {

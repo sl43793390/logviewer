@@ -1,0 +1,109 @@
+# ===========================
+# Java / Maven
+# ===========================
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+*.log
+hs_err_pid*
+replay_pid*
+
+# Maven Wrapper
+.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+# ===========================
+# Vaadin
+# ===========================
+# Vaadin 8 前端编译产物（widgetset）
+src/main/webapp/VAADIN/widgetsets/
+src/main/webapp/VAADIN/themes/*/styles.css
+src/main/webapp/VAADIN/themes/*/styles.css.map
+**/VAADIN/gwt-unitCache/
+**/VAADIN/widgetsets/
+**/VAADIN/themes/*.scss.cache
+
+# Vaadin 14+ (如后续升级，可保留)
+frontend/generated/
+node_modules/
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+webpack.generated.js
+tsconfig.json
+types.d.ts
+
+# ===========================
+# Spring Boot
+# ===========================
+# Spring Boot 配置文件（含敏感信息）
+application-local.properties
+application-local.yml
+application-local.yaml
+application-*.local.properties
+application-*.local.yml
+
+# Spring Boot 日志
+/logs/
+*.log
+
+# Spring Boot DevTools
+.spring-boot-devtools.properties
+
+# ===========================
+# IDE - IntelliJ IDEA
+# ===========================
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+.idea_modules/
+
+# ===========================
+# IDE - Eclipse / STS
+# ===========================
+.settings/
+.project
+.classpath
+.factorypath
+.apt_generated/
+.apt_generated_tests/
+.springBeans
+.sts4-cache
+
+# ===========================
+# IDE - VS Code
+# ===========================
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# ===========================
+# OS
+# ===========================
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# ===========================
+# 其他
+# ===========================
+*.tmp
+*.bak
+*.swp
+*~.nib
+local.properties
+.settings/
+.loadpath
+.recommenders

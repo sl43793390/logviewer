@@ -1,12 +1,16 @@
 #!/bin/sh
-#输入jar包名称即可
-APP_NAME=$2
+# 用法：sh server.sh {start|stop|restart|status} <jar包名>
+# 示例：sh server.sh start logviewer.jar
+APP_NAME="$2"
 
-echo "$2"
 usage() {
-    echo "Usage: sh scriptName.sh [start|stop|restart|status]"
+    echo "Usage: sh server.sh [start|stop|restart|status] <jar包名>"
     exit 1
 }
+
+if [ -z "$APP_NAME" ]; then
+    usage
+fi
 
 #检查程序是否在运行
 is_exist(){
@@ -25,7 +29,9 @@ start(){
   if [ $? -eq "0" ]; then
     echo "${APP_NAME} is already running. pid=${PID} ."
   else
-  	nohup java -jar -Xmx1024m -Xms512m ${APP_NAME} 2>&1 >app.log &
+    # JVM 参数必须写在 -jar 之前。-jar 后面紧跟的必须是 jar 包路径，
+    # 写成 "java -jar -Xmx1024m app.jar" 时 java 会把 -Xmx1024m 当 jar 包，报 Unable to access jarfile
+    nohup java -Xmx1024m -Xms512m -jar "${APP_NAME}" > app.log 2>&1 &
     echo "${APP_NAME} start success"
   fi
 }
@@ -45,7 +51,7 @@ stop(){
 status(){
   is_exist
   if [ $? -eq "0" ]; then
-    echo "${APP_NAME} is running. Pid is ${pid}"
+    echo "${APP_NAME} is running. Pid is ${PID}"
   else
     echo "${APP_NAME} is NOT running."
   fi

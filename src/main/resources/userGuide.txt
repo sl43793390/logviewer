@@ -18,8 +18,11 @@
 	5、jar包所在路径，必须配
 示例：
  	项目ID：myProject1
- 	启动命令：nohup java -jar -Xmx512m -Xms512m myProject1.jar 2>&1 myProject1.log &
+ 	启动命令：nohup java -Xmx512m -Xms512m -jar myProject1.jar > myProject1.log 2>&1 &
  	jar包所在路径：/home/test
+ 	注意：JVM 参数必须写在 -jar 之前（写在后面会被 java 当成程序参数）；
+ 	      重定向要写成 "> 日志 2>&1"，写成 "2>&1 > 日志" 时异常堆栈不会进日志文件。
+ 	      不填启动命令时使用默认 server.sh 脚本启动。
 四、当前服务器tomcat管理
 	在【发布及管理】菜单下的【tomcat管理】中管理
 	1、项目ID，不可重复

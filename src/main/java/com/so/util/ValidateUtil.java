@@ -21,8 +21,9 @@ public class ValidateUtil {
  
     /**
      * 正则表达式：验证手机号
+     * 原写法只覆盖 13x / 部分 15x / 部分 18x，17x、19x、166 等号段会误判为非法
      */
-    public static final String REGEX_MOBILE = "^((13[0-9])|(15[^4,\\D])|(18[0,5-9]))\\d{8}$";
+    public static final String REGEX_MOBILE = "^1[3-9]\\d{9}$";
  
     /**
      * 正则表达式：验证邮箱
@@ -31,8 +32,9 @@ public class ValidateUtil {
  
     /**
      * 正则表达式：验证汉字
+     * 原写法多了一个逗号，等价于「一个汉字后跟任意个逗号」，任何正常汉字串都校验不过
      */
-    public static final String REGEX_CHINESE = "^[\u4e00-\u9fa5],{0,}$";
+    public static final String REGEX_CHINESE = "^[\u4e00-\u9fa5]+$";
  
     /**
      * 正则表达式：验证身份证
@@ -42,12 +44,14 @@ public class ValidateUtil {
     /**
      * 正则表达式：验证URL
      */
-    public static final String REGEX_URL = "http(s)?://([\\w-]+\\.)+[\\w-]+(/[\\w- ./?%&=]*)?";
+    public static final String REGEX_URL = "http(s)?://([\\w-]+\\.)+[\\w-]+(/[\\w\\-./?%&=#]*)?";
  
     /**
      * 正则表达式：验证IP地址
+     * 原写法只能匹配一个 0~255 的网段，无法校验完整 IPv4
      */
-    public static final String REGEX_IP_ADDR = "(25[0-5]|2[0-4]\\d|[0-1]\\d{2}|[1-9]?\\d)";
+    public static final String REGEX_IP_ADDR =
+            "^((25[0-5]|2[0-4]\\d|[01]?\\d?\\d)\\.){3}(25[0-5]|2[0-4]\\d|[01]?\\d?\\d)$";
  
     /**
      * 校验用户名

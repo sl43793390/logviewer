@@ -11,6 +11,7 @@ import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.text.DateFormat;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
@@ -33,6 +34,7 @@ import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.io.IoUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.crypto.digest.SM3;
+import cn.hutool.system.SystemUtil;
 
 public class Util {
 
@@ -49,25 +51,25 @@ public class Util {
 	 * @throws Exception
 	 */
 	public static String getFileEncode(File fileName) throws Exception {
-		BufferedInputStream bin = new BufferedInputStream(new FileInputStream(fileName));
-		int p = (bin.read() << 8) + bin.read();
-		String code = null;
+		try (BufferedInputStream bin = new BufferedInputStream(new FileInputStream(fileName))) {
+			int p = (bin.read() << 8) + bin.read();
+			String code = null;
 
-		switch (p) {
-		case 0xefbb:
-			code = "UTF-8";
-			break;
-		case 0xfffe:
-			code = "Unicode";
-			break;
-		case 0xfeff:
-			code = "UTF-16BE";
-			break;
-		default:
-			code = "GBK";
+			switch (p) {
+			case 0xefbb:
+				code = "UTF-8";
+				break;
+			case 0xfffe:
+				code = "Unicode";
+				break;
+			case 0xfeff:
+				code = "UTF-16BE";
+				break;
+			default:
+				code = "GBK";
+			}
+			return code;
 		}
-		IoUtil.close(bin);
-		return code;
 	}
 
 	/**
@@ -80,7 +82,9 @@ public class Util {
 			if (e.trim().equals("")) {
 				continue;
 			} else if (e.contains("=")) {
-				users.put(e.split("=")[0], e.split("=")[1]);
+				// 限制切分份数，密码里含 = 时不会被截断
+				String[] pair = e.split("=", 2);
+				users.put(pair[0].trim(), pair[1].trim());
 			}
 		}
 
@@ -91,28 +95,40 @@ public class Util {
 		return getUsersConfigFile();
 	}
 
+	/**
+	 * 读取 classpath 下的配置文件。
+	 * <p>
+	 * 原实现在文件缺失/读取失败时返回 null，调用方紧接着 .listIterator() 就会 NPE，
+	 * 这里统一返回空列表，由调用方自行判断“配置缺失”。
+	 */
 	public static List<String> getConfigFileAsLineByClasspathResource(String fileName) {
 		ClassPathResource res = new ClassPathResource(fileName);
+		if (!res.exists()) {
+			log.warn("classpath 下未找到配置文件：{}", fileName);
+			return new ArrayList<String>();
+		}
 		try (InputStream in = res.getInputStream()) {
-			ArrayList<String> readLines2 = IoUtil.readLines(in, "UTF-8", new ArrayList<String>());
-			return readLines2;
+			return IoUtil.readLines(in, "UTF-8", new ArrayList<String>());
 		} catch (IOException e1) {
-			e1.printStackTrace();
+			log.error("读取配置文件 {} 失败", fileName, e1);
 		}
 
-		return null;
+		return new ArrayList<String>();
 	}
 
 	public static List<String> getUserGuide() {
 		ClassPathResource res = new ClassPathResource("userGuide.txt");
+		if (!res.exists()) {
+			log.warn("classpath 下未找到 userGuide.txt");
+			return new ArrayList<String>();
+		}
 		try (InputStream in = res.getInputStream()) {
-			ArrayList<String> readLines2 = IoUtil.readLines(in, "UTF-8", new ArrayList<String>());
-			return readLines2;
+			return IoUtil.readLines(in, "UTF-8", new ArrayList<String>());
 		} catch (IOException e1) {
-			e1.printStackTrace();
+			log.error("读取 userGuide.txt 失败", e1);
 		}
 
-		return null;
+		return new ArrayList<String>();
 	}
 
 	/**
@@ -121,28 +137,29 @@ public class Util {
 	 * @param lines
 	 */
 	public static void saveUsers(List<String> lines) {
-		// 移除空白行
-		ListIterator<String> listIterator = lines.listIterator();
-		while (listIterator.hasNext()) {
-			String str = listIterator.next();
-			if (str.trim().equals("")) {
-				listIterator.remove();
+		if (null == lines || lines.isEmpty()) {
+			return;
+		}
+		// 移除空白行，直接重建集合，避免边遍历边删除
+		List<String> result = new ArrayList<String>();
+		for (String str : lines) {
+			if (null != str && !str.trim().equals("")) {
+				result.add(str);
 			}
 		}
-		if (null == lines || lines.isEmpty()) {
+		if (result.isEmpty()) {
 			return;
 		}
 		String path = System.getProperty("user.dir") + File.separator + USERS_CONFIG;
 		// 写入
-		File file = new File(path);
-		FileUtil.writeLines(lines, file, "UTF-8");
+		FileUtil.writeLines(result, new File(path), "UTF-8");
 
 	}
 
 	public static List<String> getUsersConfigFile() {
 		List<String> configs = new ArrayList<String>();
-		List<String> defaultUser = getDefaultUser();
-		configs.addAll(defaultUser);
+		// 先放 classpath 下的默认用户
+		configs.addAll(getDefaultUser());
 		String path = System.getProperty("user.dir") + File.separator + USERS_CONFIG;
 		File file = new File(path);
 		if (!FileUtil.exist(file)) {
@@ -150,10 +167,11 @@ public class Util {
 			log.error(path);
 			return configs;
 		} else {
-			configs.addAll(defaultUser);
 			List<String> readLines = FileUtil.readLines(file, Charset.forName("UTF-8"));
 			configs.addAll(readLines);
-			return readLines;
+			// 原实现这里返回的是 readLines（只含外置配置文件内容），
+			// 导致 classpath 下的默认用户被丢弃，且 defaultUser 被 addAll 了两次
+			return configs;
 		}
 	}
 
@@ -210,13 +228,13 @@ public class Util {
 		String path = System.getProperty("user.dir") + File.separator + ComponentUtil.getCurrentUserName() + ".properties";
 		File file = new File(path);
 		if (!FileUtil.exist(file)) {
-		} else {
-			List<String> readLines = FileUtil.readLines(file, Charset.forName("UTF-8"));
-			for (String l : readLines) {
-				if (!l.trim().equals("") && l.contains("=")) {
-					if (l.split("=")[0].equals(key)) {
-						return true;
-					}
+			return false;
+		}
+		List<String> readLines = FileUtil.readLines(file, Charset.forName("UTF-8"));
+		for (String l : readLines) {
+			if (!l.trim().equals("") && l.contains("=")) {
+				if (l.split("=", 2)[0].trim().equals(key)) {
+					return true;
 				}
 			}
 		}
@@ -419,29 +437,99 @@ public class Util {
 	}
 
 	/**
+	 * 确保运行目录下存在 server.sh 与 bin/server.sh。
+	 * <p>
+	 * - {@code <运行目录>/server.sh} 供页面直接下载；<br>
+	 * - {@code <运行目录>/bin/server.sh} 在上传 jar 包到远程机器时会一并推送过去，
+	 * 远程用 {@code sh server.sh start xxx.jar} 启动。<br>
+	 * 之前这两处分别由 Application1.main 和 LoginView.enter 各写一份，
+	 * 以 servlet 容器方式部署时 main 不执行，bin/server.sh 就会缺失。
+	 */
+	public static void ensureServerScript() {
+		String base = System.getProperty("user.dir");
+		File rootScript = new File(base, "server.sh");
+		File binScript = new File(base + File.separator + "bin", "server.sh");
+		// bin 下的脚本每次启动都刷新，保证和当前版本一致
+		extractClasspathResource("server.sh", binScript, false);
+		// 运行目录下的脚本已存在则不覆盖，避免冲掉用户改过的内容
+		extractClasspathResource("server.sh", rootScript, true);
+
+		if (!SystemUtil.getOsInfo().isWindows()) {
+			executeLinuxCmd("chmod 777 '" + binScript.getAbsolutePath() + "'");
+			if (rootScript.exists()) {
+				executeLinuxCmd("chmod 777 '" + rootScript.getAbsolutePath() + "'");
+			}
+		}
+	}
+
+	/**
+	 * 把 classpath 下的资源释放到指定位置
+	 *
+	 * @param resource     classpath 资源名
+	 * @param target       目标文件
+	 * @param skipIfExists true 表示目标已存在时跳过
+	 */
+	private static void extractClasspathResource(String resource, File target, boolean skipIfExists) {
+		if (skipIfExists && target.exists()) {
+			return;
+		}
+		ClassPathResource res = new ClassPathResource(resource);
+		if (!res.exists()) {
+			log.warn("classpath 下未找到 {}，跳过释放", resource);
+			return;
+		}
+		File parent = target.getParentFile();
+		if (parent != null && !parent.exists() && !parent.mkdirs()) {
+			log.warn("创建目录失败：{}", parent.getAbsolutePath());
+			return;
+		}
+		try (InputStream in = res.getInputStream()) {
+			FileUtil.writeFromStream(in, target);
+		} catch (IOException e) {
+			log.error("释放 {} 到 {} 失败", resource, target.getAbsolutePath(), e);
+		}
+	}
+
+	/**
 	 * 执行一条命令
+	 * <p>
+	 * 原实现用 {@code Runtime.exec(String)}，命令按空白切分，路径里带空格会直接失败；
+	 * 且读流在 waitFor 之前没读完时会阻塞。这里改为 shell 执行并先读完输出再等待。
+	 * 
 	 * @param cmd
-	 * @return
+	 * @return 命令输出，执行失败返回 null
 	 */
 	public static String executeLinuxCmd(String cmd) {
-		System.out.println("got cmd job : " + cmd);
-		Runtime run = Runtime.getRuntime();
+		log.info("got cmd job : {}", cmd);
+		Process process = null;
 		try {
-			Process process = run.exec(cmd);
-			InputStream in = process.getInputStream();
-			BufferedReader bs = new BufferedReader(new InputStreamReader(in));
+			ProcessBuilder builder;
+			if (SystemUtil.getOsInfo().isWindows()) {
+				builder = new ProcessBuilder("cmd.exe", "/c", cmd);
+			} else {
+				builder = new ProcessBuilder("/bin/sh", "-c", cmd);
+			}
+			builder.redirectErrorStream(true);
+			process = builder.start();
 			StringBuffer out = new StringBuffer();
-			bs.lines().forEach(e -> out.append(e));
-			System.out.println("job result [" + out.toString() + "]");
-			in.close();
-			 process.waitFor();
-			process.destroy();
-			return "success";
+			try (BufferedReader bs = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+				String line;
+				while ((line = bs.readLine()) != null) {
+					out.append(line).append(System.lineSeparator());
+				}
+			}
+			process.waitFor();
+			log.info("job result [{}]", out.toString().trim());
+			return out.toString();
 		} catch (IOException e) {
 			log.error(ExceptionUtil.stacktraceToString(e));
-			e.printStackTrace();
 		} catch (InterruptedException e) {
-			e.printStackTrace();
+			Thread.currentThread().interrupt();
+			log.error("执行命令被中断：{}", cmd, e);
+		} finally {
+			if (null != process) {
+				process.destroy();
+			}
 		}
 		return null;
 	}
@@ -454,22 +542,27 @@ public class Util {
 	 */
 	public static List<String> executeNewFlow(List<String> commands) {
 		List<String> results = new ArrayList<String>();
-		Runtime run = Runtime.getRuntime();
 		try {
-			Process proc = run.exec("/bin/bash", null, null);
-			BufferedReader in = new BufferedReader(new InputStreamReader(proc.getInputStream()));
-			PrintWriter out = new PrintWriter(new BufferedWriter(new OutputStreamWriter(proc.getOutputStream())), true);
+			// 原实现用 Runtime.exec("/bin/bash")，没有合并 stderr，
+			// 命令往 stderr 写满管道缓冲区（约 64KB）时会卡死在这里
+			ProcessBuilder builder;
+			if (SystemUtil.getOsInfo().isWindows()) {
+				builder = new ProcessBuilder("cmd.exe");
+			} else {
+				builder = new ProcessBuilder("/bin/bash");
+			}
+			builder.redirectErrorStream(true);
+			Process proc = builder.start();
+			BufferedReader in = new BufferedReader(new InputStreamReader(proc.getInputStream(), StandardCharsets.UTF_8));
+			PrintWriter out = new PrintWriter(new BufferedWriter(new OutputStreamWriter(proc.getOutputStream(), StandardCharsets.UTF_8)), true);
 			for (String line : commands) {
 				out.println(line);
-				log.info("发送命令："+line);
+				log.info("发送命令：{}", line);
 			}
-			// out.println("cd /home/test");
-			// out.println("pwd");
-			// out.println("rm -fr /home/proxy.log");
-			out.println("exit");// 这个命令必须执行，否则in流不结束。
-			String rspLine = "";
+			// 这个命令必须执行，否则in流不结束。
+			out.println("exit");
+			String rspLine;
 			while ((rspLine = in.readLine()) != null) {
-//				System.out.println(rspLine);
 				results.add(rspLine);
 			}
 			proc.waitFor();
@@ -477,9 +570,10 @@ public class Util {
 			out.close();
 			proc.destroy();
 		} catch (IOException e1) {
-			e1.printStackTrace();
+			log.error("执行命令失败", e1);
 		} catch (InterruptedException e) {
-			e.printStackTrace();
+			Thread.currentThread().interrupt();
+			log.error("执行命令被中断", e);
 		}
 		return results;
 	}

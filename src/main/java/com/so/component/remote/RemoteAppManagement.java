@@ -12,6 +12,7 @@ import com.so.component.CommonComponent;
 import com.so.component.ComponentUtil;
 import com.so.component.util.TabSheetUtil;
 import com.so.entity.ConnectionInfo;
+import com.vaadin.ui.Label;
 import com.vaadin.ui.Notification;
 import com.vaadin.ui.Panel;
 import com.vaadin.ui.TabSheet;
@@ -45,6 +46,11 @@ public class RemoteAppManagement extends CommonComponent {
 		tabsheet = new TabSheet();
 		mainPanel.setContent(tabsheet);
 		readyToConnect();
+		if (null == session) {
+			// 连接建不起来时不要继续建 Tab，否则子组件拿到 null session 会在各种地方 NPE
+			tabsheet.addComponent(new Label("未能连接到 " + hostName + "，请检查连接配置后重试"));
+			return;
+		}
 		initMainLayout();
 	}
 
@@ -52,13 +58,14 @@ public class RemoteAppManagement extends CommonComponent {
 	 * 布局
 	 */
 	private void initMainLayout() {
+		String host = addr.getIdHost();
 		RemoteLogSearchComponent logSearchComponent = ComponentUtil.applicationContext.getBean(RemoteLogSearchComponent.class);
 		logSearchComponent.setJschSession(session);
 		logSearchComponent.setAddr(addr);
 		logSearchComponent.initLayout();
 		logSearchComponent.initContent();
 		logSearchComponent.registerHandler();
-		tabsheet.addTab(logSearchComponent,"　日志搜索-"+StrUtil.sub(addr.getIdHost(), 8, 20)).setClosable(false);
+		tabsheet.addTab(logSearchComponent,"　日志搜索-"+host).setClosable(false);
 		tabsheet.setSelectedTab(logSearchComponent);
 
 		RemoteJarMgmtComponent bean = ComponentUtil.applicationContext.getBean(RemoteJarMgmtComponent.class);
@@ -67,7 +74,7 @@ public class RemoteAppManagement extends CommonComponent {
 		bean.initLayout();
 		bean.initContent();
 		bean.registerHandler();
-		tabsheet.addTab(bean,"Jar项目管理-"+StrUtil.sub(addr.getIdHost(), 8, 20)).setClosable(false);
+		tabsheet.addTab(bean,"Jar项目管理-"+host).setClosable(false);
 		tabsheet.setSelectedTab(bean);
 		//tomat 管理页面
 		RemoteTomcatMgmtComponent tomcat = ComponentUtil.applicationContext.getBean(RemoteTomcatMgmtComponent.class);
@@ -76,7 +83,7 @@ public class RemoteAppManagement extends CommonComponent {
 		tomcat.initLayout();
 		tomcat.initContent();
 		tomcat.registerHandler();
-		tabsheet.addTab(tomcat,"Tomcat管理-"+StrUtil.sub(addr.getIdHost(), 8, 20)).setClosable(false);
+		tabsheet.addTab(tomcat,"Tomcat管理-"+host).setClosable(false);
 //		nginx及其它管理页面
 		CommonProjecttMgmtComponent common = ComponentUtil.applicationContext.getBean(CommonProjecttMgmtComponent.class);
 		common.setJschSession(session);
@@ -84,7 +91,19 @@ public class RemoteAppManagement extends CommonComponent {
 		common.initLayout();
 		common.initContent();
 		common.registerHandler();
-		tabsheet.addTab(common,"通用项目管理-"+StrUtil.sub(addr.getIdHost(), 8, 20)).setClosable(false);
+		tabsheet.addTab(common,"通用项目管理-"+host).setClosable(false);
+	}
+
+	@Override
+	public void detach() {
+		super.detach();
+		// session 是本组件创建的，tab 关闭时必须断开。
+		// 原来 closeChannel() 全项目没有任何调用点，每开一次「应用管理」都会漏一条 SSH 连接
+		try {
+			closeChannel();
+		} catch (Exception e) {
+			log.error("关闭远程连接失败", e);
+		}
 	}
 
 	@Override
@@ -99,17 +118,22 @@ public class RemoteAppManagement extends CommonComponent {
 	}
 	private void readyToConnect() {
 		try {
-			if (addr.getCdKeyPath() == null) {
+			if (null == addr) {
+				throw new IllegalStateException("连接信息为空");
+			}
+			// cdKeyPath 可能是空串而不是 null，用 == null 判断会把空串当成"配了秘钥"
+			if (StrUtil.isBlank(addr.getCdKeyPath())) {
 				//无秘钥连接
 				session = JschUtil.createSession(hostName, Integer.parseInt(addr.getCdPort()), addr.getIdUser(), addr.getCdPassword());
-			}else if(addr.getCdKeyPath() != null){
+			} else {
 				//秘钥连接
 				session = JschUtil.createSession(hostName, Integer.parseInt(addr.getCdPort()), addr.getIdUser(),addr.getCdKeyPath(),  addr.getCdPassword() == null ?null :addr.getCdPassword().getBytes());
 			}
-		} catch (NumberFormatException e) {
-			Notification.show("连接失败请检查配置", Notification.Type.WARNING_MESSAGE);
-			e.printStackTrace();
-			return;
+		} catch (Exception e) {
+			// 原来只 catch NumberFormatException，认证失败/主机不可达等都会直接冒到 UI 层
+			log.error("连接远程主机 {} 失败：{}", hostName, e.getMessage(), e);
+			session = null;
+			Notification.show("连接失败请检查配置：" + e.getMessage(), Notification.Type.ERROR_MESSAGE);
 		}
 	}
 	

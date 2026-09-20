@@ -34,6 +34,7 @@ import com.vaadin.ui.Panel;
 import com.vaadin.ui.TextField;
 import com.vaadin.ui.VerticalLayout;
 
+import cn.hutool.core.util.NumberUtil;
 import cn.hutool.system.SystemUtil;
 
 /**
@@ -120,7 +121,10 @@ public class LogSearchComponent extends CommonComponent {
 		fileEncodingCombo = ComponentFactory.getStandardComboBox();
 		fileEncodingCombo.setEmptySelectionAllowed(false);
 		fileEncodingCombo.setItems(Constants.ISO_8859_1, Constants.GBK, Constants.UTF_8);
-		// fileEncodingCombo.setValue(Constants.UTF_8);
+		// 必须给默认值：原实现这行被注释掉，配合 setEmptySelectionAllowed(false)
+		// 会让下拉框为空，LogDetailComponent 拿到 null 编码后回退到平台默认编码，
+		// 在 Linux 上打开 GBK 日志就会乱码
+		fileEncodingCombo.setValue(Constants.UTF_8);
 		abs.getAbsoluteLayouts().get(6).addComponent(fileEncodingCombo);
 
 	}
@@ -189,8 +193,9 @@ public class LogSearchComponent extends CommonComponent {
 	}
 
 	private void openLogFile(PathEntityInfo set) {
-		if (set.getFileName().endsWith("pdf") || set.getFileName().endsWith("doc") || set.getFileName().endsWith("docx") ||
-				set.getFileName().endsWith("xls") || set.getFileName().endsWith("xlsx")){
+		String fileName = set.getFileName() == null ? "" : set.getFileName().toLowerCase();
+		if (fileName.endsWith("pdf") || fileName.endsWith("doc") || fileName.endsWith("docx") ||
+				fileName.endsWith("xls") || fileName.endsWith("xlsx")){
 			Notification.show("支持文本文档在线打开，请下载后查看");
 			return;
 		}
@@ -216,89 +221,89 @@ public class LogSearchComponent extends CommonComponent {
 				log.error("路径已经存在");
 			}
 			File file = new File(pathField.getValue());
-			if (file.exists()) {
-				if (file.canRead()) {
-//					logFileCombo.clear();
-					loadFiles(file);
-					initGridContent();
-				} else {
-					Notification.show("该目录没有读取权限，请联系管理员", Notification.Type.WARNING_MESSAGE);
-					return;
-				}
-			} else {
-				Notification.show("该目录不存在", Notification.Type.WARNING_MESSAGE);
-				return;
-			}
+			loadFilesForSearch(file);
 		} else if (pathCombo.getValue() != null) {
 			// 从历史记录中获取
 			File file = new File(pathCombo.getValue());
-			if (file.exists()) {
-				if (file.canRead()) {
-//					logFileCombo.clear();
-					loadFiles(file);
-					initGridContent();
-				} else {
-					Notification.show("该目录没有读取权限，请联系管理员", Notification.Type.WARNING_MESSAGE);
-					return;
-				}
-
-			} else {
-				Notification.show("该目录不存在", Notification.Type.WARNING_MESSAGE);
-				return;
-			}
+			loadFilesForSearch(file);
 		} else {
 			Notification.show("请输入路径后再搜索", Notification.Type.WARNING_MESSAGE);
 			return;
 		}
 	}
 
-	private void loadFiles(File file) {
-		// 将用户搜索的路径添加到历史搜索文件中
+	private void loadFilesForSearch(File file) {
+		if (!file.exists()) {
+			Notification.show("该目录不存在", Notification.Type.WARNING_MESSAGE);
+			return;
+		}
+		if (!file.isDirectory()) {
+			Notification.show("请输入目录路径，不能是文件", Notification.Type.WARNING_MESSAGE);
+			return;
+		}
+		if (!file.canRead()) {
+			Notification.show("该目录没有读取权限，请联系管理员", Notification.Type.WARNING_MESSAGE);
+			return;
+		}
 		try {
-			writeSearchPathToFile();
+			loadFiles(file);
+			initGridContent();
 		} catch (IOException e) {
-			e.printStackTrace();
-			log.error("读取用户配置文件错误：{}", ComponentUtil.getCurrentUserName());
+			log.error("读取用户配置文件错误：{}", ComponentUtil.getCurrentUserName(), e);
 		}
+	}
+
+	private void loadFiles(File file) throws IOException {
+		// 将用户搜索的路径添加到历史搜索文件中
+		writeSearchPathToFile();
 		String suffix = fileSuffixCombo.getValue();
-		File[] listFiles = file.listFiles();
 		searchFileList = new ArrayList<PathEntityInfo>();
-		for (int i = 0; i < listFiles.length; i++) {
-			if (ContainCombo.getValue().equals("是")) {
-				if (listFiles[i].isFile() && listFiles[i].getName().contains(suffix)) {
-					PathEntityInfo info = new PathEntityInfo();
-					info.setFileName(listFiles[i].getName());
-					info.setFileSize((listFiles[i].length() / 1024) + "kb");
-					info.setAbsolutePath(listFiles[i].getAbsolutePath());
-					info.setSuffix(suffix);
-					info.setCreateDate(Util.formatDate(new Date(listFiles[i].lastModified())));
-					searchFileList.add(info);
-				}
-			}else {
-				if (listFiles[i].isFile() && suffix.equals("*")){
-					PathEntityInfo info = new PathEntityInfo();
-					info.setFileName(listFiles[i].getName());
-					info.setFileSize((listFiles[i].length() / 1024) + "kb");
-					info.setAbsolutePath(listFiles[i].getAbsolutePath());
-					info.setSuffix(suffix);
-					info.setCreateDate(Util.formatDate(new Date(listFiles[i].lastModified())));
-					searchFileList.add(info);
-				}else if (listFiles[i].isFile() && listFiles[i].getName().endsWith(suffix)) {
-					PathEntityInfo info = new PathEntityInfo();
-					info.setFileName(listFiles[i].getName());
-					info.setFileSize((listFiles[i].length() / 1024) + "kb");
-					info.setAbsolutePath(listFiles[i].getAbsolutePath());
-					info.setSuffix(suffix);
-					info.setCreateDate(Util.formatDate(new Date(listFiles[i].lastModified())));
-					searchFileList.add(info);
-				}
-			}
+		File[] listFiles = file.listFiles();
+		// listFiles() 在目录不可读或不是目录时会返回 null，原实现直接遍历 -> NPE
+		if (listFiles == null) {
+			Notification.show("该目录无法读取", Notification.Type.WARNING_MESSAGE);
+			return;
 		}
-//		logFileCombo.setItems(searchFileList);
+		boolean containsMode = "是".equals(ContainCombo.getValue());
+		boolean anySuffix = "*".equals(suffix);
+		for (File item : listFiles) {
+			if (!item.isFile()) {
+				continue;
+			}
+			String name = item.getName();
+			boolean matched = containsMode ? name.contains(suffix) : (anySuffix || name.endsWith(suffix));
+			if (!matched) {
+				continue;
+			}
+			PathEntityInfo info = new PathEntityInfo();
+			info.setFileName(name);
+			// 原来用 length/1024 整数除法，小于 1KB 的文件一律显示 0kb
+			info.setFileSize(formatFileSize(item.length()));
+			info.setAbsolutePath(item.getAbsolutePath());
+			info.setSuffix(suffix);
+			info.setCreateDate(Util.formatDate(new Date(item.lastModified())));
+			searchFileList.add(info);
+		}
+	}
+
+	/**
+	 * 把字节数格式化成可读字符串
+	 */
+	private static String formatFileSize(long bytes) {
+		if (bytes < 1024) {
+			return bytes + "B";
+		}
+		if (bytes < 1024L * 1024) {
+			return NumberUtil.decimalFormat("0.00", bytes / 1024.0) + "KB";
+		}
+		if (bytes < 1024L * 1024 * 1024) {
+			return NumberUtil.decimalFormat("0.00", bytes / 1024.0 / 1024) + "MB";
+		}
+		return NumberUtil.decimalFormat("0.00", bytes / 1024.0 / 1024 / 1024) + "GB";
 	}
 
 	private void writeSearchPathToFile() throws IOException {
-		if (pathField.getValue().equals("")) {
+		if (pathField.getValue() == null || pathField.getValue().equals("")) {
 			return;
 		}
 		if (items.contains(pathField.getValue())) {

@@ -23,23 +23,19 @@ public class CustomErrorHandler implements ErrorHandler {
 
 	@Override
 	public void error(ErrorEvent event) {
+		// 无论能不能定位到组件，先把真实异常记下来，否则线上只能看到一句"系统繁忙"
+		logger.error("UI 未捕获异常：", event.getThrowable());
 		// Finds the original source of the error/exception
 		AbstractComponent component = DefaultErrorHandler.findAbstractComponent(event);
 		if (component != null) {
 			ErrorMessage errorMessage = getErrorMessageForException(event.getThrowable());
 			if (errorMessage != null) {
-				logger.error("报错信息："+errorMessage);
-				logger.error("详细错误信息：",event.getThrowable());
-				// component.setComponentError(errorMessage);
-				// Notification.show(errorMessage.getFormattedHtmlMessage(),
-				// Notification.Type.WARNING_MESSAGE);
-//				new Notification(null, errorMessage.getFormattedHtmlMessage(), Type.WARNING_MESSAGE, true)
-//						.show(Page.getCurrent());
-				new Notification(null, "系统繁忙，请稍后重试", Type.WARNING_MESSAGE, true)
-				.show(Page.getCurrent());
+				new Notification(null, errorMessage.getFormattedHtmlMessage(), Type.WARNING_MESSAGE, true)
+						.show(Page.getCurrent());
 				return;
 			}
 		}
+		// getErrorMessageForException 现在会返回 null，这条兜底分支才真正可达
 		DefaultErrorHandler.doDefault(event);
 	}
 
@@ -47,13 +43,14 @@ public class CustomErrorHandler implements ErrorHandler {
 
 //	    PersistenceException persistenceException = getCauseOfType(t, PersistenceException.class);
 //	    可根据异常类型获取不同message；persistenceException.getLocalizedMessage()
-		RuntimeException runtimeException = getCauseOfType(t, RuntimeException.class);
-		if (runtimeException !=null) {
+	RuntimeException runtimeException = getCauseOfType(t, RuntimeException.class);
+		if (runtimeException != null && runtimeException.getLocalizedMessage() != null) {
 			return new UserError(runtimeException.getLocalizedMessage(), AbstractErrorMessage.ContentMode.TEXT, ErrorLevel.ERROR);
 		}
-		logger.info("系统繁忙，请稍后重试");
-	      return new UserError("系统繁忙，请稍后重试", AbstractErrorMessage.ContentMode.TEXT, ErrorLevel.ERROR);
-	    
+		// 返回 null 交给 DefaultErrorHandler 处理。
+		// 原实现这里恒定返回一个"系统繁忙"的 ErrorMessage，下面的兜底永远走不到，
+		// 所有异常都被同一句话盖掉，排查时完全看不到原因
+		return null;
 	}
 
 	private static <T extends Throwable> T getCauseOfType(Throwable th, Class<T> type) {

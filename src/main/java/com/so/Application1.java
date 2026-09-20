@@ -1,9 +1,6 @@
 package com.so;
 
-import cn.hutool.core.io.FileUtil;
-import cn.hutool.core.io.IoUtil;
 import cn.hutool.core.net.NetUtil;
-import cn.hutool.system.SystemUtil;
 import com.so.util.Util;
 import org.mybatis.spring.annotation.MapperScan;
 import org.slf4j.Logger;
@@ -15,15 +12,10 @@ import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
-import org.springframework.core.io.ClassPathResource;
 
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.net.SocketException;
-import java.util.ArrayList;
 import java.util.Enumeration;
 
 
@@ -39,7 +31,10 @@ public class Application1 extends org.springframework.boot.web.servlet.support.S
         ConfigurableApplicationContext ctx = app.run(args);
 		logger.info("the application start success!!!");
 		String port = ctx.getEnvironment().getProperty("server.port");
-		String path = ctx.getEnvironment().getProperty("server.servlet.context-path");
+		String contextPath = ctx.getEnvironment().getProperty("server.servlet.context-path");
+		if (null == contextPath) {
+			contextPath = "";
+		}
 		System.out.println("====================address============================");
 		for (NetworkInterface networkInterface : NetUtil.getNetworkInterfaces()) {
 			try {
@@ -50,37 +45,19 @@ public class Application1 extends org.springframework.boot.web.servlet.support.S
 						if (!inetAddress.isSiteLocalAddress()){
 							continue;
 						}
-						System.out.println(inetAddress.getHostAddress()+":"+port+path);
+						System.out.println(inetAddress.getHostAddress()+":"+port+contextPath);
 					}
 				}
 			} catch (SocketException e) {
-				throw new RuntimeException(e);
+				logger.warn("获取网卡地址失败：{}", e.getMessage());
 			}
 		}
 		try {
-			if (SystemUtil.getOsInfo().isLinux()){
-				mkdirBin();
-			}
-		} catch (IOException e) {
+			// 释放 server.sh 脚本（运行目录 + bin 目录），Linux 下顺带加执行权限。
+			// 原来只在 main 里做，以 WAR 方式部署时 main 不执行，bin/server.sh 就缺了
+			Util.ensureServerScript();
+		} catch (Exception e) {
 			logger.error("生成server.sh脚本错误{}",e.getMessage());
-			throw new RuntimeException(e);
-		}
-	}
-
-	private static void mkdirBin() throws IOException {
-		String property = System.getProperty("user.dir");
-		String pathname = property + File.separator + "bin";
-		File file = new File(pathname);
-		if (!file.exists()){
-			boolean mkdirs = file.mkdirs();
-		}
-		ClassPathResource res = new ClassPathResource("server.sh");
-		try (InputStream in = res.getInputStream()) {
-			ArrayList<String> readLines = IoUtil.readLines(in, "UTF-8", new ArrayList<String>());
-			FileUtil.writeUtf8Lines(readLines,pathname + File.separator+"server.sh");
-		}
-		if (SystemUtil.getOsInfo().isLinux()){
-			Util.executeLinuxCmd("chmod 777 "+pathname + File.separator+"server.sh");
 		}
 	}
 
