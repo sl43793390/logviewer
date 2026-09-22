@@ -87,6 +87,9 @@ public class LogCheckView extends VerticalLayout implements View {
 		addSubMenu(localMgmt,"management.TomcatListComponent","Tomcat管理");
 		addSubMenu(localMgmt,"management.CommonProjecttMgmtLocal","通用项目管理");
 
+		addSubMenu(dockerItem,"docker.DockerMgmtComponent","容器和镜像管理");
+		addSubMenu(dockerItem,"docker.DockerComposeComponent","Docker-Compose管理");
+
 		addSubMenu(remoteMgmt,"remote.RemoteLoginComponent","远程日志搜索");
 		addSubMenu(remoteMgmt,"remote.RemoteServerListComponent","免登录服务器列表");
 //		addSubMenu(publishItem,"management.TestTomcatManage","测试Tomcat启停");

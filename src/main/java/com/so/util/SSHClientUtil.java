@@ -279,6 +279,87 @@ public class SSHClientUtil {
         }
     }
 
+    /**
+     * 打开一个命令通道并把输出作为流返回，用于「边产出边消费」的长输出命令
+     * （例如 {@code docker logs --tail 5000}、{@code cat 大日志}）。
+     * <p>
+     * {@link #executeCommand(String)} 会把整段输出先读进内存，导出大日志时既慢又费内存；
+     * 这里返回的流直接对接 sshj 的通道输入流，读完（或中途 close）时
+     * 会自动关掉 {@code Session.Command} 和 {@code Session}，不会泄漏通道。
+     * <p>
+     * <b>只读 stdout。</b>需要连 stderr 一起拿就在命令末尾自己加 {@code 2>&1}。
+     * 调用方必须负责关闭返回的流。
+     */
+    public InputStream openCommandStream(String command) throws IOException {
+        if (null == sshClient) {
+            throw new IOException("SSH 连接未建立，无法执行命令：" + command);
+        }
+        Session session = sshClient.startSession();
+        try {
+            return new CommandInputStream(session, session.exec(command));
+        } catch (Exception e) {
+            try {
+                session.close();
+            } catch (Exception ignore) {
+                // 关不掉也不影响主流程
+            }
+            if (e instanceof IOException) {
+                throw (IOException) e;
+            }
+            throw new IOException("打开命令通道失败：" + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 把 {@code Session} + {@code Session.Command} 的生命周期绑在流上。
+     */
+    private static final class CommandInputStream extends InputStream {
+
+        private final Session session;
+        private final Session.Command command;
+        private final InputStream in;
+
+        CommandInputStream(Session session, Session.Command command) {
+            this.session = session;
+            this.command = command;
+            this.in = command.getInputStream();
+        }
+
+        @Override
+        public int read() throws IOException {
+            return in.read();
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) throws IOException {
+            return in.read(b, off, len);
+        }
+
+        @Override
+        public int available() throws IOException {
+            return in.available();
+        }
+
+        @Override
+        public void close() throws IOException {
+            try {
+                in.close();
+            } catch (IOException ignore) {
+                // 忽略
+            }
+            try {
+                command.close();
+            } catch (Exception ignore) {
+                // 忽略
+            }
+            try {
+                session.close();
+            } catch (Exception ignore) {
+                // 忽略
+            }
+        }
+    }
+
     // 上传文件并可选验证哈希值
     public boolean uploadFile(String localFilePath, String remoteFilePath, String localFileHash) throws IOException {
         getSftpClient().put(new FileSystemFile(localFilePath), remoteFilePath); // 上传文件

@@ -130,6 +130,15 @@ public class ConfirmationDialogPopupWindow extends PopupWindow {
         return yesButton;
     }
 
+    /**
+     * 弹出窗的内容容器，供调用方插入额外控件（例如删除容器时的「强制删除」勾选框）。
+     * <p>
+     * 结构是：[图标 + 描述文案] [按钮行]，往 index 1 处插入就会落在文案和按钮之间。
+     */
+    public VerticalLayout getLayout() {
+        return layout;
+    }
+
     public void setYesButton(Button yesButton) {
         this.yesButton = yesButton;
     }

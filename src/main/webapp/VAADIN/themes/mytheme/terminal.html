@@ -159,13 +159,37 @@
         /** 服务端 notice 里的错误原文，onclose 时用它代替"连接已断开"这种没信息量的话 */
         var lastError = '';
 
+        /* ---------------- 运行模式 ----------------
+         * 三个参数都有默认值，不传时行为与 SSH 终端完全一致。
+         * 容器日志（docker logs -f）与容器终端复用这个页面，只是换了端点、开了只读、
+         * 并打开 convertEol —— docker logs 没有 tty，输出只有 LF，
+         * 不开 convertEol 时 xterm 会把它渲染成一路向右下斜的阶梯。
+         */
+        function getParam(name) {
+            var search = window.location.search || '';
+            if (!search) {
+                return null;
+            }
+            try {
+                return new URLSearchParams(search).get(name);
+            } catch (e) {
+                var matched = new RegExp('[?&]' + name + '=([^&]*)').exec(search);
+                return matched ? decodeURIComponent(matched[1]) : null;
+            }
+        }
+
+        var wsEndpoint = getParam('ws') || '/ws/ssh';
+        var readOnlyMode = getParam('ro') === '1';
+        var convertEol = getParam('eol') === '1';
+
         var term = new Terminal({
-            cursorBlink: true,
+            cursorBlink: !readOnlyMode,
             cursorStyle: 'bar',
             fontSize: 13,
             fontFamily: 'Consolas, Menlo, Monaco, "Courier New", monospace',
             lineHeight: 1.2,
             scrollback: 20000,
+            convertEol: convertEol,
             // unicode11 插件要写 term.unicode.activeVersion，属于实验 API，必须显式打开
             allowProposedApi: true,
             macOptionIsMeta: true,
@@ -262,7 +286,8 @@
             var scheme = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
             var search = window.location.search || '';
             var sep = search ? (search.charAt(0) === '?' ? '&' : '?') : '?';
-            return scheme + window.location.host + contextPath + '/ws/ssh'
+            var endpoint = wsEndpoint.charAt(0) === '/' ? wsEndpoint : '/' + wsEndpoint;
+            return scheme + window.location.host + contextPath + endpoint
                 + search + sep + 'cols=' + term.cols + '&rows=' + term.rows;
         }
 
@@ -354,6 +379,10 @@
         }
 
         term.onData(function (data) {
+            // 只读视图（容器日志）不回发任何按键
+            if (readOnlyMode) {
+                return;
+            }
             if (socket && socket.readyState === WebSocket.OPEN) {
                 socket.send(JSON.stringify({data: data}));
             }
@@ -392,6 +421,9 @@
         }
 
         function pasteText() {
+            if (readOnlyMode) {
+                return;
+            }
             if (navigator.clipboard && navigator.clipboard.readText) {
                 navigator.clipboard.readText().then(function (text) {
                     if (text && socket && socket.readyState === WebSocket.OPEN) {

@@ -16918,7 +16918,6 @@ div.v-layout.v-horizontal.v-widget {
     -moz-user-select: none;
     -webkit-user-select: none;
     -ms-user-select: none;
-    padding: 12px 20px;
     font-size: 14px;
     border-radius: 4px;
 }
@@ -16926,41 +16925,35 @@ div.v-layout.v-horizontal.v-widget {
 	color: #fff;
     background-color: #409eff;
     border-color: #409eff;
-    height: 50px;
-    font-size: 19px;
+    height: 30px;
 }
 .mytheme .el-button--success {
 	color: #fff;
    background-color: #67c23a;
     border-color: #67c23a;
-    height: 50px;
-    font-size: 19px;
+    height: 30px;
 }
 .mytheme .el-button--info {
 	color: #fff;
 	background-color: #909399;
     border-color: #909399;
-    height: 50px;
-    font-size: 19px;
+    height: 30px;
 }
 .mytheme .el-button--warning {
 	color: #fff;
     background-color: #e6a23c;
     border-color: #e6a23c;
-    height: 50px;
-    font-size: 19px;
+    height: 30px;
 }
 .mytheme .el-button--danger {
 	color: #fff;
     background-color: #f56c6c;
     border-color: #f56c6c;
-    height: 50px;
-    font-size: 19px;
+    height: 30px;
 }
 .mytheme .el-button--white {
 	color: black;
-    height: 50px;
-    font-size: 19px;
+    height: 30px;
     border: 1px solid #dcdfe6;
 }
 .mytheme .button_standard_linked {
@@ -18063,4 +18056,261 @@ element.style {
 .mytheme .v-datefield-popup .v-datefield-calendarpanel {
 	background-color: #fff !important;
 }
+
+/* ==================================================================
+ * Docker 管理
+ * ------------------------------------------------------------------
+ * 所有规则都追加在文件末尾，不要动上面的 Valo 产物
+ * （重跑 vaadin:compile-theme 会把这些全部冲掉）。
+ *
+ * 几个反复咬人的 Valo 前提，写新规则时都要先在心里过一遍：
+ *   1. `.v-widget` 默认 `display:inline-block`，要铺满 / 居中都得先显式改 block；
+ *   2. `.v-label-undef-w` 带 `white-space:nowrap` —— 任何承载长文案的 Label
+ *      都必须自己写 `white-space:normal`，否则提示文字会横着冲出面板；
+ *   3. 纵向布局里的槽位靠 `.v-vertical > .v-slot` 才变块级，Docker 页面里
+ *      大量用 CssLayout / 裸 HorizontalLayout，这里统一给兜底宽度。
+ * ================================================================== */
+
+/* ---------------- 工具栏与状态条 ---------------- */
+
+.mytheme .docker-toolbar {
+	display: block;
+	width: 100%;
+	box-sizing: border-box;
+	background-color: #f7f9fb;
+	border: 1px solid #e2e8ee;
+	border-radius: 3px;
+	padding: 6px 10px;
+}
+
+.mytheme .docker-toolbar > .v-slot {
+	display: inline-block;
+	vertical-align: middle;
+	margin-right: 6px;
+}
+
+/* 工具栏最后一个槽位（通常是 CheckBox 或占位 Label）靠右展开 */
+.mytheme .docker-toolbar > .v-slot:last-child {
+	margin-right: 0;
+}
+
+.mytheme .docker-status {
+	display: block;
+	width: 100%;
+	box-sizing: border-box;
+	font-size: 12px;
+	color: #6b7a8d;
+	white-space: normal;
+	line-height: 20px;
+	padding-left: 2px;
+}
+
+.mytheme .docker-env-label {
+	display: block;
+	width: 100%;
+	box-sizing: border-box;
+	font-size: 12px;
+	color: #2f6f4f;
+	background-color: #f0f7f3;
+	border-left: 3px solid #4c9e78;
+	padding: 3px 8px;
+	white-space: normal;
+	line-height: 20px;
+}
+
+.mytheme .docker-busy {
+	display: block;
+	font-size: 12px;
+	color: #b26a00;
+	white-space: nowrap;
+}
+
+/* ---------------- 提示文案 ---------------- */
+
+.mytheme .docker-hint {
+	display: block;
+	width: 100%;
+	box-sizing: border-box;
+	font-size: 12px;
+	color: #8a95a5;
+	line-height: 18px;
+	white-space: normal;
+}
+
+.mytheme .docker-summary {
+	display: block;
+	font-size: 13px;
+	font-weight: 600;
+	color: #2c3e50;
+	white-space: nowrap;
+}
+
+.mytheme .docker-section-title {
+	display: block;
+	width: 100%;
+	box-sizing: border-box;
+	font-size: 13px;
+	font-weight: 600;
+	color: #34495e;
+	border-bottom: 1px solid #e2e8ee;
+	padding-bottom: 3px;
+	margin-top: 4px;
+	white-space: normal;
+}
+
+.mytheme .docker-placeholder {
+	display: block;
+	width: 100%;
+	box-sizing: border-box;
+	font-size: 14px;
+	color: #8a5a00;
+	background-color: #fff8e1;
+	border-left: 3px solid #f0ad4e;
+	border-radius: 2px;
+	padding: 10px 12px;
+	white-space: normal;
+	line-height: 22px;
+}
+
+/* ---------------- 容器状态标记 ---------------- */
+/* 容器状态是个小色标，颜色沿用运维的直觉：
+ * 运行中=绿、已暂停=橙、已停止=灰。跟股票涨跌那套红绿约定无关。 */
+
+.mytheme .docker-state-running,
+.mytheme .docker-state-paused,
+.mytheme .docker-state-stopped {
+	display: inline-block;
+	font-size: 12px;
+	line-height: 18px;
+	padding: 0 8px;
+	border-radius: 9px;
+	white-space: nowrap;
+}
+
+.mytheme .docker-state-running {
+	color: #1c6b42;
+	background-color: #e3f5ea;
+	border: 1px solid #a9dcc0;
+}
+
+.mytheme .docker-state-paused {
+	color: #8a5a00;
+	background-color: #fdf3dd;
+	border: 1px solid #f0d59a;
+}
+
+.mytheme .docker-state-stopped {
+	color: #6b7a8d;
+	background-color: #eef1f5;
+	border: 1px solid #d3dae3;
+}
+
+/* ---------------- 详情 / 日志 / 终端 ---------------- */
+
+/* inspect 的 JSON、docker 命令输出这类内容一律等宽字体 */
+.mytheme .docker-inspect-area,
+.mytheme .docker-inspect-area textarea {
+	font-family: Consolas, "Courier New", Menlo, monospace !important;
+	font-size: 12px;
+	line-height: 17px;
+	white-space: pre;
+	overflow: auto;
+}
+
+/* BrowserFrame 外面那圈边框 —— BrowserFrame 自己不带任何装饰 */
+.mytheme .docker-term-frame {
+	display: block;
+	width: 100%;
+	box-sizing: border-box;
+	border: 1px solid #2b3440;
+	border-radius: 3px;
+	background-color: #1e1e1e;
+	padding: 0;
+	overflow: hidden;
+}
+
+/* BrowserFrame 内部的 iframe 默认有 2px 内边距，会露出一圈白边 */
+.mytheme .docker-term-frame iframe {
+	display: block;
+	width: 100%;
+	border: 0;
+	margin: 0;
+}
+
+.mytheme .docker-symlink {
+	color: #2f80ed;
+	font-style: italic;
+}
+
+/* ---------------- 弹窗里的选项 ---------------- */
+
+.mytheme .docker-dialog-checkbox {
+	display: block;
+	margin-top: 6px;
+	white-space: normal;
+}
+
+/* ---------------- Docker 服务状态与「Docker 不可用」弹窗 ---------------- */
+
+/* Valo 的 .v-label-undef-w 带 nowrap，长文案会冲出容器，这里统一放开换行 */
+.mytheme .docker-env-label,
+.mytheme .docker-daemon-line,
+.mytheme .docker-daemon-title {
+	white-space: normal !important;
+	line-height: 18px;
+}
+
+.mytheme .docker-env-warn {
+	color: #c0392b;
+	font-weight: bold;
+}
+
+.mytheme .docker-daemon-title {
+	font-size: 15px;
+	font-weight: bold;
+	color: #c0392b;
+}
+
+/* 主页面上的占位提示（daemon 不可用时不建子页签，改显示这块） */
+.mytheme .docker-daemon-notice {
+	border: 1px solid #e0b4b4;
+	border-left: 4px solid #c0392b;
+	border-radius: 3px;
+	background-color: #fdf6f6;
+}
+
+.mytheme .docker-daemon-notice .v-textarea {
+	background-color: #fff;
+}
+
+/* 诊断文本 / 错误原文 / 执行报告 / 待执行命令：一律可读、可换行 */
+.mytheme .docker-daemon-text,
+.mytheme .docker-daemon-cmd {
+	padding: 4px;
+	border: 1px solid #ddd;
+	border-radius: 3px;
+	background-color: #fafafa;
+	font-family: Consolas, "Courier New", monospace;
+	font-size: 12px;
+}
+
+.mytheme .docker-daemon-cmd {
+	background-color: #f5f7fa;
+}
+
+.mytheme .docker-daemon-text textarea,
+.mytheme .docker-daemon-cmd textarea {
+	color: #333 !important;
+	opacity: 1 !important;
+	font-family: Consolas, "Courier New", monospace;
+	font-size: 12px;
+	line-height: 17px;
+}
+
+/* 只读态在 Valo 下会被调成浅灰，读起来费劲 */
+.mytheme .docker-daemon-text.v-readonly textarea,
+.mytheme .docker-daemon-cmd.v-readonly textarea {
+	color: #333 !important;
+}
+
 
