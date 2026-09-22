@@ -142,11 +142,11 @@ public class DockerSystemPage extends AbstractDockerPage {
         diskGrid.setWidth("100%");
         diskGrid.setHeight("190px");
         diskGrid.addStyleName("grid_standard");
-        diskGrid.addColumn(DockerSystemInfo.DiskUsage::getType).setCaption("类型").setWidth(220);
-        diskGrid.addColumn(DockerSystemInfo.DiskUsage::getTotal).setCaption("总数").setWidth(100);
-        diskGrid.addColumn(DockerSystemInfo.DiskUsage::getActive).setCaption("活跃").setWidth(100);
-        diskGrid.addColumn(DockerSystemInfo.DiskUsage::getSize).setCaption("占用空间").setWidth(120);
-        diskGrid.addColumn(DockerSystemInfo.DiskUsage::getReclaimable).setCaption("可回收").setWidth(150);
+        diskGrid.addColumn(DockerSystemInfo.DiskUsage::getType).setCaption("类型");
+        diskGrid.addColumn(DockerSystemInfo.DiskUsage::getTotal).setCaption("总数");
+        diskGrid.addColumn(DockerSystemInfo.DiskUsage::getActive).setCaption("活跃");
+        diskGrid.addColumn(DockerSystemInfo.DiskUsage::getSize).setCaption("占用空间");
+        diskGrid.addColumn(DockerSystemInfo.DiskUsage::getReclaimable).setCaption("可回收");
         contentLayout.addComponent(diskGrid);
         contentLayout.setExpandRatio(diskGrid, 1f);
         diskGrid.setItems(new ArrayList<DockerSystemInfo.DiskUsage>());

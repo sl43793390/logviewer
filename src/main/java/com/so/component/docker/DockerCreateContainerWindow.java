@@ -67,8 +67,8 @@ public class DockerCreateContainerWindow extends Window {
         this.executor = owner.getExecutor();
         this.page = page;
 
-        setWidth("760px");
-        setHeight("720px");
+        setWidth("1100px");
+        setHeight("950px");
         setModal(true);
         setResizable(true);
         center();
@@ -81,7 +81,7 @@ public class DockerCreateContainerWindow extends Window {
 
         Panel formPanel = new Panel();
         formPanel.setWidth("100%");
-        formPanel.setHeight("430px");
+        formPanel.setHeight("680px");
         root.addComponent(formPanel);
 
         FormLayout form = new FormLayout();

@@ -80,14 +80,15 @@ public class DockerImagePage extends AbstractDockerPage {
     private void buildGrid() {
         grid = new Grid<DockerImage>();
         grid.setSizeFull();
+        grid.setWidthFull();
         grid.addStyleName("grid_standard");
-        grid.setSelectionMode(Grid.SelectionMode.MULTI);
+        grid.setSelectionMode(Grid.SelectionMode.SINGLE);
 
-        grid.addColumn(DockerImage::getShortId).setCaption("镜像 ID").setWidth(120);
-        grid.addColumn(DockerImage::getRepository).setCaption("仓库").setWidth(280);
-        grid.addColumn(DockerImage::getTag).setCaption("标签").setWidth(130);
-        grid.addColumn(DockerImage::getSize).setCaption("大小").setWidth(100);
-        grid.addColumn(DockerImage::getCreatedAt).setCaption("创建时间").setWidth(200);
+        grid.addColumn(DockerImage::getShortId).setCaption("镜像 ID");
+        grid.addColumn(DockerImage::getRepository).setCaption("仓库");
+        grid.addColumn(DockerImage::getTag).setCaption("标签");
+        grid.addColumn(DockerImage::getSize).setCaption("大小");
+        grid.addColumn(DockerImage::getCreatedAt).setCaption("创建时间");
         grid.addComponentColumn(this::buildRowActions).setCaption("操作").setWidth(200);
     }
 
@@ -279,7 +280,7 @@ public class DockerImagePage extends AbstractDockerPage {
 
         PullWindow() {
             super("拉取镜像");
-            setWidth("600px");
+            setWidth("900px");
             setHeight("300px");
             setModal(true);
             center();
@@ -290,18 +291,16 @@ public class DockerImagePage extends AbstractDockerPage {
             root.setSpacing(true);
             setContent(root);
 
-            FormLayout form = new FormLayout();
-            form.setWidth("100%");
-            refField = ComponentFactory.getStandardTtextField("镜像地址（registry/repository:tag）");
+            root.addComponent(ComponentFactory.getStandardLabel("镜像地址（registry/repository:tag）"));
+            refField = ComponentFactory.getStandardTtextField();
             refField.setWidth("520px");
             refField.setPlaceholder("nginx:1.25  或  registry.example.com/team/app:v1.2.3");
-            form.addComponent(refField);
+            root.addComponent(refField);
             Label hint = new Label("不写 registry 时默认从 Docker Hub 拉取；"
                     + "内网仓库请写全地址，例如 harbor.example.com/base/openjdk:8-jre。");
             hint.addStyleName("docker-hint");
             hint.setWidth("520px");
-            form.addComponent(hint);
-            root.addComponent(form);
+            root.addComponent(hint);
 
             HorizontalLayout buttons = new HorizontalLayout();
             buttons.setSpacing(true);
@@ -312,6 +311,7 @@ public class DockerImagePage extends AbstractDockerPage {
             cancel.setWidth("80px");
             buttons.addComponents(pullBtn, cancel);
             buttons.setExpandRatio(cancel, 1f);
+            buttons.setComponentAlignment(pullBtn, Alignment.MIDDLE_RIGHT);
             buttons.setComponentAlignment(cancel, Alignment.MIDDLE_RIGHT);
             root.addComponent(buttons);
 
@@ -340,7 +340,7 @@ public class DockerImagePage extends AbstractDockerPage {
                 @Override
                 public void done(String output) {
                     Notification.show("拉取完成：" + StrUtil.emptyToDefault(output, "成功"),
-                            Notification.Type.HUMANIZED_MESSAGE);
+                            Notification.Type.ASSISTIVE_NOTIFICATION);
                     close();
                     reload();
                 }

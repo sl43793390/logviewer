@@ -86,12 +86,12 @@ public class DockerNetworkPage extends AbstractDockerPage {
         grid.addStyleName("grid_standard");
         grid.setSelectionMode(Grid.SelectionMode.SINGLE);
 
-        grid.addColumn(DockerNetwork::getShortId).setCaption("网络 ID").setWidth(120);
-        grid.addColumn(DockerNetwork::getName).setCaption("名称").setWidth(200);
-        grid.addColumn(DockerNetwork::getDriver).setCaption("驱动").setWidth(90);
-        grid.addColumn(DockerNetwork::getScope).setCaption("范围").setWidth(90);
-        grid.addColumn(DockerNetwork::getSubnet).setCaption("子网").setWidth(160);
-        grid.addColumn(DockerNetwork::getGateway).setCaption("网关").setWidth(140);
+        grid.addColumn(DockerNetwork::getShortId).setCaption("网络 ID");
+        grid.addColumn(DockerNetwork::getName).setCaption("名称");
+        grid.addColumn(DockerNetwork::getDriver).setCaption("驱动");
+        grid.addColumn(DockerNetwork::getScope).setCaption("范围");
+        grid.addColumn(DockerNetwork::getSubnet).setCaption("子网");
+        grid.addColumn(DockerNetwork::getGateway).setCaption("网关");
         grid.addColumn(network -> String.valueOf(network.getContainers().size()))
                 .setCaption("容器数").setWidth(80);
         grid.addComponentColumn(this::buildRowActions).setCaption("操作").setWidth(260);

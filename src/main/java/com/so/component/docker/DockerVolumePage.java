@@ -85,12 +85,12 @@ public class DockerVolumePage extends AbstractDockerPage {
         grid.addStyleName("grid_standard");
         grid.setSelectionMode(Grid.SelectionMode.MULTI);
 
-        grid.addColumn(DockerVolume::getName).setCaption("卷名").setWidth(260);
-        grid.addColumn(DockerVolume::getDriver).setCaption("驱动").setWidth(90);
-        grid.addColumn(DockerVolume::getScope).setCaption("范围").setWidth(90);
+        grid.addColumn(DockerVolume::getName).setCaption("卷名");
+        grid.addColumn(DockerVolume::getDriver).setCaption("驱动");
+        grid.addColumn(DockerVolume::getScope).setCaption("范围");
         grid.addColumn(DockerVolume::getMountpoint).setCaption("宿主机路径").setWidth(320);
-        grid.addColumn(DockerVolume::getUsedByText).setCaption("挂载容器").setWidth(220);
-        grid.addColumn(DockerVolume::getCreatedAt).setCaption("创建时间").setWidth(190);
+        grid.addColumn(DockerVolume::getUsedByText).setCaption("挂载容器");
+        grid.addColumn(DockerVolume::getCreatedAt).setCaption("创建时间");
         grid.addComponentColumn(this::buildRowActions).setCaption("操作").setWidth(170);
     }
 

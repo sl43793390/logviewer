@@ -137,7 +137,7 @@ public class DockerMgmtComponent extends CommonComponent {
 
         row.addComponent(ComponentFactory.getStandardLabel("docker 命令："));
         prefixField = ComponentFactory.getStandardTtextField();
-        prefixField.setWidth("180px");
+        prefixField.setWidth("350px");
         prefixField.setPlaceholder("留空自动探测，如 sudo -n docker");
         row.addComponent(prefixField);
 

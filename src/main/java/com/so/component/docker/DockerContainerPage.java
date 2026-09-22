@@ -92,8 +92,8 @@ public class DockerContainerPage extends AbstractDockerPage {
         grid.addStyleName("grid_standard");
         grid.setSelectionMode(Grid.SelectionMode.MULTI);
 
-        grid.addColumn(DockerContainer::getName).setCaption("名称").setWidth(200);
-        grid.addColumn(DockerContainer::getImage).setCaption("镜像").setWidth(220);
+        grid.addColumn(DockerContainer::getName).setCaption("名称");
+        grid.addColumn(DockerContainer::getImage).setCaption("镜像");
 
         // 状态列显示中文状态 + docker 原始 Status（"Up 3 hours" 这种能看到运行了多久）
         grid.addComponentColumn(container -> {
@@ -110,11 +110,11 @@ public class DockerContainerPage extends AbstractDockerPage {
             HorizontalLayout row = new HorizontalLayout(state, detail);
             row.setSpacing(true);
             return row;
-        }).setCaption("状态").setWidth(250);
+        }).setCaption("状态");
 
         grid.addColumn(container -> StrUtil.emptyToDefault(container.getPorts(), "-"))
                 .setCaption("端口映射").setWidth(280);
-        grid.addColumn(DockerContainer::getCreatedAt).setCaption("创建时间").setWidth(200);
+        grid.addColumn(DockerContainer::getCreatedAt).setCaption("创建时间");
 
         grid.addComponentColumn(this::buildRowActions).setCaption("操作").setWidth(330);
     }
