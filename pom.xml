@@ -246,10 +246,15 @@
 			<artifactId>bcpkix-jdk15on</artifactId>
 			<version>1.60</version>
 		</dependency>
-			<dependency>
-			<groupId>com.alibaba</groupId>
-			<artifactId>easyexcel</artifactId>
-			<version>2.2.6</version>
+		<!-- 导出 Excel 用 POI 直接写。
+		     原来这里是 easyexcel 2.2.6：它依赖 cglib，而 cglib 在 JDK 17 及以上
+		     会因模块访问限制抛 InaccessibleObjectException（反射调用
+		     ClassLoader.defineClass 被拒），导出按钮会直接报错。
+		     POI 没有这个依赖，JDK 8 / 17 / 21 上都能跑。 -->
+		<dependency>
+			<groupId>org.apache.poi</groupId>
+			<artifactId>poi-ooxml</artifactId>
+			<version>4.1.2</version>
 		</dependency>
 		<dependency>
 			<groupId>org.xerial</groupId>

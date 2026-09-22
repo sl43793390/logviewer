@@ -17,11 +17,9 @@ import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
-import java.util.HashMap;
 import java.util.List;
 import java.util.ListIterator;
 import java.util.Locale;
-import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,8 +37,6 @@ import cn.hutool.system.SystemUtil;
 public class Util {
 
 	private static final Logger log = LoggerFactory.getLogger(Util.class);
-
-	private static final String USERS_CONFIG = "users.properties";
 
 	/**
 	 * 判断文件的编码格式
@@ -70,29 +66,6 @@ public class Util {
 			}
 			return code;
 		}
-	}
-
-	/**
-	 * 查询配置文件中的用户
-	 */
-	public static Map<String, String> getUsers() {
-		Map<String, String> users = new HashMap<String, String>();
-		List<String> readLines = getUsersConfigFile();
-		for (String e : readLines) {
-			if (e.trim().equals("")) {
-				continue;
-			} else if (e.contains("=")) {
-				// 限制切分份数，密码里含 = 时不会被截断
-				String[] pair = e.split("=", 2);
-				users.put(pair[0].trim(), pair[1].trim());
-			}
-		}
-
-		return users;
-	}
-
-	public static List<String> getUsersAsLine() {
-		return getUsersConfigFile();
 	}
 
 	/**
@@ -129,50 +102,6 @@ public class Util {
 		}
 
 		return new ArrayList<String>();
-	}
-
-	/**
-	 * 将用户保存到配置文件中，覆盖模式
-	 * 
-	 * @param lines
-	 */
-	public static void saveUsers(List<String> lines) {
-		if (null == lines || lines.isEmpty()) {
-			return;
-		}
-		// 移除空白行，直接重建集合，避免边遍历边删除
-		List<String> result = new ArrayList<String>();
-		for (String str : lines) {
-			if (null != str && !str.trim().equals("")) {
-				result.add(str);
-			}
-		}
-		if (result.isEmpty()) {
-			return;
-		}
-		String path = System.getProperty("user.dir") + File.separator + USERS_CONFIG;
-		// 写入
-		FileUtil.writeLines(result, new File(path), "UTF-8");
-
-	}
-
-	public static List<String> getUsersConfigFile() {
-		List<String> configs = new ArrayList<String>();
-		// 先放 classpath 下的默认用户
-		configs.addAll(getDefaultUser());
-		String path = System.getProperty("user.dir") + File.separator + USERS_CONFIG;
-		File file = new File(path);
-		if (!FileUtil.exist(file)) {
-			log.error("请在jar包同级路径下放置users.properties文件，以便登录使用，格式：用户名=密码,默认用户admin");
-			log.error(path);
-			return configs;
-		} else {
-			List<String> readLines = FileUtil.readLines(file, Charset.forName("UTF-8"));
-			configs.addAll(readLines);
-			// 原实现这里返回的是 readLines（只含外置配置文件内容），
-			// 导致 classpath 下的默认用户被丢弃，且 defaultUser 被 addAll 了两次
-			return configs;
-		}
 	}
 
 	/**
@@ -248,24 +177,6 @@ public class Util {
 	 */
 	public static List<String> getRemoteServerList() {
 		List<String> configFileAsLine = getConfigFileAsLineByClasspathResource("remoteServerList.conf");
-
-		ListIterator<String> listIterator = configFileAsLine.listIterator();
-		while (listIterator.hasNext()) {
-			String type = listIterator.next();
-			if (type.startsWith("#") || type.trim().equals("") || !type.contains("=") || type.endsWith("=path")) {
-				listIterator.remove();
-			}
-		}
-		return configFileAsLine;
-	}
-
-	/**
-	 * 读取classpath下的默认用户
-	 * 
-	 * @return
-	 */
-	public static List<String> getDefaultUser() {
-		List<String> configFileAsLine = getConfigFileAsLineByClasspathResource("users.properties");
 
 		ListIterator<String> listIterator = configFileAsLine.listIterator();
 		while (listIterator.hasNext()) {

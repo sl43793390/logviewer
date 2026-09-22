@@ -75,7 +75,7 @@ mvn clean package -DskipTests
 ### 2. 部署
 
 把 `logviewer.jar` 放到服务器上任意一个**空目录**（建议新建），然后在该目录下启动。
-运行目录（`user.dir`）就是数据目录，`demo.db`、`fileStorage/`、`users.properties` 都会生成在这里。
+运行目录（`user.dir`）就是数据目录，`demo.db`、`fileStorage/` 都会生成在这里。
 
 ```bash
 # 方式一：直接启动
@@ -101,7 +101,7 @@ http://<ip>:9095/log/
 ```
 
 - 未登录时自动跳到登录页（`#!loginView`）
-- 默认账号 **admin / admin**，登录成功后进入主界面
+- 默认账号 **admin / admin**（内置管理员，由程序在启动时自动写入数据库），登录成功后进入主界面
 - 注意 URL 里的 **`/log`** 上下文路径不能省
 
 ### 4. 兼容性
@@ -121,7 +121,6 @@ http://<ip>:9095/log/
 | `demo.sql` | 首次启动时的建表与初始数据脚本 | 否 |
 | `fileSuffix.conf` | 允许查看 / 搜索的文件后缀列表 | 否（可放 jar 同级覆盖） |
 | `remoteServerList.conf` | 免登录服务器列表 | 否（可放 jar 同级覆盖） |
-| `users.properties` | 登录用户名与密码摘要 | **是**，见下 |
 | `server.sh` | jar 项目的默认启停脚本模板 | 自动释放到运行目录 |
 | `tomcat.sh` | Tomcat 启停脚本模板 | 否 |
 | `userGuide.txt` | 页面「使用说明」展示的内容 | 否 |
@@ -140,17 +139,16 @@ spring.datasource.driver-class-name=org.sqlite.JDBC
 
 修改端口或上下文路径后，访问地址相应变为 `http://<ip>:<port>/<context-path>/`。
 
-### 用户配置 `users.properties`
+### 用户与登录账号
 
-- 首次启动时，如果运行目录下没有该文件，**登录会失败**。把 jar 包内 `BOOT-INF/classes/users.properties` 解出来放到 **jar 同级目录**即可。
-
-  ```properties
-  admin=DC1FD00E3EEEB940FF46F457BF97D66BA7FCC36E0B20802383DE142860E76AE6
-  ```
-
-- 格式为 `用户名=密码摘要`，一行一个用户，默认用户为 `admin`（密码 `admin`）。
-- 页面「用户管理」里新增 / 修改用户会自动写回运行目录下的 `users.properties`，重启后生效。
-- 密码摘要使用 UTF-8 计算，**Windows 与 Linux 下结果一致**，不要用记事本改成其他编码保存。
+- 账号的唯一来源是数据库 `users` 表，**没有任何外部用户文件**。历史版本要求把 `users.properties` 放到 jar 同级目录，现已彻底移除；那个文件丢了、没拷、编码错了都不会再把系统锁在门外。
+- 启动时会做两件幂等的事（见 `src/main/java/com/so/util/DbInitializer.java`）：
+  1. 库里一个用户都没有时执行 `demo.sql`，建表并写入示例账号；
+  2. 检查内置管理员 `admin`——不存在就按默认密码写入，密码列为空 / 被禁用 / 已过期 / 权限被摘掉都会自动修回可用状态。
+- 因此即便换机器、删掉 `demo.db` 重来，也一定能用 **admin / admin** 登进来。
+- 登录后请到「用户管理」里改掉 `admin` 的密码，并按需创建其他账号。
+- 内置管理员 `admin` 受保护：**不能删除、不能禁用、不能改权限、不能设有效期**，否则系统会失去唯一的引导账号；它的姓名、邮箱、手机、密码仍可以正常修改。
+- 任何账号都不能删除自己。
 
 ### 文件后缀 `fileSuffix.conf`
 
@@ -179,11 +177,10 @@ spring.datasource.driver-class-name=org.sqlite.JDBC
 | `demo.db` | SQLite 数据库，首次启动由 `demo.sql` 建表 |
 | `fileStorage/` | 文件上传接口的存储根目录 |
 | `<用户名>.properties` | 每个用户自己的搜索历史、连接记录 |
-| `users.properties` | 用户与密码摘要（见上） |
 | `bin/server.sh` | 给被管理的 jar 项目使用的默认启停脚本 |
 | `app.log` | 使用 `server.sh` 或重定向启动时的应用日志 |
 
-> **升级时请保留** `demo.db`、`fileStorage/`、`users.properties` 和 `<用户名>.properties`，否则会丢失已配置的机器、项目与用户。
+> **升级时请保留** `demo.db`、`fileStorage/` 和 `<用户名>.properties`，否则会丢失已配置的机器、项目与用户（用户账号也都在 `demo.db` 里）。
 
 ## 使用说明
 
@@ -303,10 +300,33 @@ src/main/java/com/so
 
   预览稿 `docs/login-preview.html` 的 DOM 照抄 Vaadin 真实渲染结果，浏览器直接打开即可看效果；校验脚本会用无头 Chrome 真的排一次版，检查卡片居中、输入框宽度、文案换行、窄屏收起等。
 
+### 用户体系与登录入口
+
+- **账号只存在数据库里**。`users` 表是唯一来源，没有任何外部用户文件；历史版本要求的 `users.properties` 已彻底移除。
+- 启动时由 `DbInitializer.ensureAdminUser()` 保证引导入口可用，它是幂等的：
+  - `users` 表不存在就建；缺字段（从老版本升级上来的库）就自动 `ALTER TABLE` 补齐；
+  - 内置管理员 `admin` 不存在就按默认密码写入；
+  - `admin` 存在但密码列为空 / 被禁用 / 已过期 / 权限被摘，自动修回可用状态，并在日志里 WARN 说明改了什么。
+- 因为上面这层保证，删掉 `demo.db` 重来、换机器、误改库都不会出现「谁都登不进去」。
+- `admin` 在用户管理页受硬保护：不能删除、不能禁用、不能改权限、不能设有效期（编辑窗口里这些控件是灰的，服务端在 `checkProtected` 里还会再拦一次）；任何账号都不能删除自己。
+- 日期字段的读写要一起看：`users` 表的 `create_time` / `expire_time` 是文本列，实体上必须**同时**有 `@TableField(typeHandler = TextDateTypeHandler.class)` 和 `@TableName(autoResultMap = true)`。只有前者时，insert / update 会按约定格式写入，但 select 会退回默认的 `DateTypeHandler`（它调 `rs.getTimestamp()`），遇到库里 `date('now')` 这类纯日期就抛 `Error parsing time stamp`，整个用户管理页打不开。
+- 回归验证（JDK 8，工作目录为项目根目录，只用临时库，不动 `demo.db`）：
+
+  ```bash
+  mvn -o -B dependency:build-classpath "-Dmdep.outputFile=target_cp.txt"
+  CP="target/classes;$(cat target_cp.txt)"
+  "C:/Program Files/Java/jdk1.8.0_202/bin/javac.exe" -encoding UTF-8 -nowarn -cp "$CP" \
+      -d target/verify-classes scripts/verify/VerifyAdminSeed.java
+  "C:/Program Files/Java/jdk1.8.0_202/bin/java.exe" -Dfile.encoding=UTF-8 \
+      -cp "target/classes;target/verify-classes;$CP" com.so.component.VerifyAdminSeed
+  ```
+
+  46 项断言覆盖：空库自动建表、旧库补字段、`admin` 被删 / 被禁用 / 过期 / 降权 / 清空密码后的自愈、重复调用幂等、登录判定链路，以及用真实的 `demo.db` 验证历史纯日期数据能正常读出。
+
 ## 常见问题
 
 **1. 登录提示用户名或密码错误，但密码没问题**
-密码摘要按 UTF-8 计算。如果手工改过 `users.properties` 的编码（例如用记事本另存为 ANSI），摘要就会对不上。请保证该文件是 UTF-8 无 BOM。
+先看「用户管理」里该账号的状态是不是「已禁用」或「已过期」——这两种状态即使密码正确也会被拒绝登录，并且页面上会写明原因。密码摘要按 UTF-8 计算后存入 SQLite，不存在外部文件的编码问题。
 
 **2. 启动后页面打不开 / 404**
 访问地址必须带上下文路径：`http://<ip>:9095/log/`。端口和上下文路径在 `application.properties` 里改。
@@ -314,8 +334,8 @@ src/main/java/com/so
 **3. 启动 jar 项目后看不到日志**
 检查启动命令：JVM 参数要写在 `-jar` 前面；重定向要写成 `> app.log 2>&1`。另外确认「jar 所在路径」填的是**目录**，不含 jar 包名。
 
-**4. `users.properties` 放在哪里？**
-jar 包**同级目录**（也就是启动 jar 时的当前目录），不是 jar 内部。首次启动若找不到该文件会打印明确提示。
+**4. 忘记 admin 密码，或者所有账号都登不进去了**
+内置管理员 `admin` 由程序保证存在：重启后如果它被禁用、已过期、权限被摘掉或密码列为空，都会自动修回可用状态，所以正常情况下不会彻底进不去。只是忘了密码的话，用 `admin` 登录后在「用户管理」里重置即可；连 `admin` 的密码也忘了，就停掉程序、把运行目录下的 `demo.db` 删掉再启动，程序会重新建库并写入 `admin / admin`（这会清空已保存的机器、项目与账号，操作前先备份）。
 
 **5. 上传的密钥文件放在哪？**
 同上，放 jar 同级目录；`remoteServerList.conf` 里写相对路径，例如私钥在 `test/key1.rsa` 就写 `test/key1.rsa`。

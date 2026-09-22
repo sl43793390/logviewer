@@ -27,7 +27,10 @@ public class ConfirmationDialogPopupWindow extends PopupWindow {
     public ConfirmationDialogPopupWindow(String title, String description, String sureCaption, String cancleCaption,
                                          boolean isClosable) {
         setWidth("429px");
-        setHeight("190px");
+        // 高度不能写死 190px：删除用户这类文案是多行 HTML（好几个 <br/>），
+        // 内容一旦超过 190px 就会把按钮行顶出内容区、叠在提示文字上。
+        // 交给内容决定高度，文案多长都不会互相压。
+        setHeightUndefined();
         setModal(true);
         setResizable(true);
         this.setClosable(isClosable);
@@ -35,7 +38,7 @@ public class ConfirmationDialogPopupWindow extends PopupWindow {
         layout = new VerticalLayout();
         layout.setMargin(true);
         layout.setSpacing(true);
-        layout.setSizeFull();
+        layout.setWidth("100%");
         layout.addStyleName("common-popWindow-style");
 
         setContent(layout);
@@ -109,12 +112,17 @@ public class ConfirmationDialogPopupWindow extends PopupWindow {
     protected void initLabel(String description) {
         descriptionLabel = new Label(description, ContentMode.HTML);
         descriptionLabel.addStyleName("common-popWindow-content");
-        descriptionLabel.setWidth("390px");
+        // 宽度不能写死 390px：弹窗总宽 429px，扣掉内边距和左侧图标本来就放不下，
+        // 长文案会被挤成更多行。让它占满消息行的剩余宽度。
+        descriptionLabel.setWidth("100%");
 
         Label iconLabel = new Label();
         iconLabel.setIcon(new ThemeResource("img/sure.png"));
 
         HorizontalLayout msgLayout = new HorizontalLayout(iconLabel, descriptionLabel);
+        msgLayout.setWidth("100%");
+        msgLayout.setSpacing(true);
+        msgLayout.setExpandRatio(descriptionLabel, 1.0f);
         layout.addComponent(msgLayout);
     }
 

@@ -25,7 +25,8 @@ public class ConfirmationDialogSingleButtonPopupWindow extends PopupWindow {
 
 	public ConfirmationDialogSingleButtonPopupWindow(String title, String description, String sureCaption, boolean isClosable) {
 		setWidth("429px");
-		setHeight("190px");
+		// 与双按钮版本同一个问题：高度写死会把按钮行顶到提示文字上，改为随内容伸缩
+		setHeightUndefined();
 		setModal(true);
 		setResizable(true);
 		this.setClosable(isClosable);
@@ -33,7 +34,7 @@ public class ConfirmationDialogSingleButtonPopupWindow extends PopupWindow {
 		layout = new VerticalLayout();
 		layout.setMargin(true);
 		layout.setSpacing(true);
-		layout.setSizeFull();
+		layout.setWidth("100%");
 		layout.addStyleName("common-popWindow-style");
 
 		setContent(layout);
@@ -92,12 +93,16 @@ public class ConfirmationDialogSingleButtonPopupWindow extends PopupWindow {
 	protected void initLabel(String description) {
 		descriptionLabel = new Label(description, ContentMode.HTML);
 		descriptionLabel.addStyleName("common-popWindow-content");
-		descriptionLabel.setWidth("390px");
+		// 同双按钮版本：固定 390px 会在 429px 的窗口里放不下，改为占满剩余宽度
+		descriptionLabel.setWidth("100%");
 
 		Label iconLabel = new Label();
 		iconLabel.setIcon(new ThemeResource("img/sure.png"));
 
 		HorizontalLayout msgLayout = new HorizontalLayout(iconLabel, descriptionLabel);
+		msgLayout.setWidth("100%");
+		msgLayout.setSpacing(true);
+		msgLayout.setExpandRatio(descriptionLabel, 1.0f);
 		layout.addComponent(msgLayout);
 	}
 }

@@ -17506,3 +17506,561 @@ element.style {
 		width: 50%;
 	}
 }
+
+/* ==========================================================================
+ * 用户管理页样式（2026-09，对应 com.so.component.UserManagementComponent）
+ * 类名统一以 um- 开头，只作用于这一页，不影响其它页面。
+ * 和上面的登录页一样，这是手写在 Valo 编译产物之后的覆盖规则，
+ * 改完不要重跑 vaadin:compile-theme，否则整段会被冲掉。
+ * ========================================================================== */
+.mytheme .um-root {
+	font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", -apple-system, sans-serif;
+	color: #303133;
+}
+
+/* Valo 的 .v-slot 带 white-space:nowrap（那是给横向布局用的），
+ * 纵向布局的槽位也要显式写成块级，否则行内容会横着冲出容器。
+ *
+ * 注意第二行这条不是多余的：只要布局里有一个子组件设过 setExpandRatio（本页是表格），
+ * Vaadin 的客户端布局就会把所有槽位整体塞进一个 <div class="v-expand"> 里，
+ * 槽位从此不再是 .um-root 的直接子元素，`.um-root > .v-slot` 一条都匹配不上。
+ * 只写第一行的话，这段样式在手上有 expandRatio 的页面上等于不存在。 */
+.mytheme .um-root > .v-slot,
+.mytheme .um-root > .v-expand > .v-slot {
+	display: block;
+	width: 100%;
+}
+
+.mytheme .um-root .v-slot,
+.mytheme .um-root .v-label {
+	white-space: normal;
+}
+
+/* ---------------- 按钮变体 ---------------- */
+.mytheme .um-btn-primary {
+	color: #fff;
+	background: #409eff;
+	border: 1px solid #409eff;
+}
+
+.mytheme .um-btn-primary:hover {
+	background: #66b1ff;
+	border-color: #66b1ff;
+}
+
+.mytheme .um-btn-plain {
+	color: #606266;
+	background: #fff;
+	border: 1px solid #dcdfe6;
+}
+
+.mytheme .um-btn-plain:hover {
+	color: #409eff;
+	border-color: #c6d9f7;
+	background: #ecf5ff;
+}
+
+.mytheme .um-btn-green {
+	color: #fff;
+	background: #67c23a;
+	border: 1px solid #67c23a;
+}
+
+.mytheme .um-btn-red {
+	color: #fff;
+	background: #f56c6c;
+	border: 1px solid #f56c6c;
+}
+
+/* ---------------- 顶部标题行 ---------------- */
+.mytheme .um-head {
+	display: -webkit-box;
+	display: -ms-flexbox;
+	display: flex;
+	-ms-flex-wrap: wrap;
+	flex-wrap: wrap;
+	-ms-flex-align: center;
+	align-items: center;
+	-ms-flex-pack: justify;
+	justify-content: space-between;
+	width: 100%;
+	box-sizing: border-box;
+	padding: 4px 12px 14px 12px;
+}
+
+.mytheme .um-title {
+	font-size: 20px;
+	font-weight: 700;
+	line-height: 1.3;
+	color: #2b3b4f;
+}
+
+.mytheme .um-subtitle {
+	font-size: 12px;
+	color: #909399;
+	margin-top: 2px;
+}
+
+.mytheme .um-head-actions {
+	display: -webkit-box;
+	display: -ms-flexbox;
+	display: flex;
+	-ms-flex-align: center;
+	align-items: center;
+}
+
+.mytheme .um-head-actions .v-button {
+	margin-left: 10px;
+}
+
+/* ---------------- 统计卡片 ---------------- */
+.mytheme .um-stat-row {
+	display: -webkit-box;
+	display: -ms-flexbox;
+	display: flex;
+	-ms-flex-wrap: wrap;
+	flex-wrap: wrap;
+	width: 100%;
+	box-sizing: border-box;
+	padding: 0 12px 14px 12px;
+}
+
+.mytheme .um-stat-card {
+	-ms-flex: 1 1 0;
+	flex: 1 1 0;
+	min-width: 140px;
+	box-sizing: border-box;
+	margin-right: 14px;
+	padding: 12px 16px 12px 20px;
+	position: relative;
+	background: #fff;
+	border: 1px solid #ebeef5;
+	border-radius: 8px;
+	overflow: hidden;
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+	-webkit-transition: box-shadow 160ms, border-color 160ms;
+	transition: box-shadow 160ms, border-color 160ms;
+}
+
+.mytheme .um-stat-card:last-child {
+	margin-right: 0;
+}
+
+.mytheme .um-stat-card:before {
+	content: "";
+	position: absolute;
+	left: 0;
+	top: 0;
+	bottom: 0;
+	width: 4px;
+	background: #dcdfe6;
+}
+
+.mytheme .um-stat-total:before {
+	background: #409eff;
+}
+
+.mytheme .um-stat-ok:before {
+	background: #67c23a;
+}
+
+.mytheme .um-stat-off:before {
+	background: #909399;
+}
+
+.mytheme .um-stat-expire:before {
+	background: #f56c6c;
+}
+
+.mytheme .um-stat-value {
+	display: block;
+	font-size: 24px;
+	font-weight: 700;
+	line-height: 1.15;
+	color: #303133;
+}
+
+.mytheme .um-stat-caption {
+	display: block;
+	font-size: 13px;
+	color: #909399;
+	margin-top: 2px;
+}
+
+.mytheme .um-stat-clickable {
+	cursor: pointer;
+}
+
+.mytheme .um-stat-clickable:hover {
+	border-color: #c6d9f7;
+	box-shadow: 0 4px 12px rgba(64, 158, 255, 0.16);
+}
+
+/* ---------------- 筛选栏 ---------------- */
+.mytheme .um-filter {
+	display: -webkit-box;
+	display: -ms-flexbox;
+	display: flex;
+	-ms-flex-wrap: wrap;
+	flex-wrap: wrap;
+	-ms-flex-align: end;
+	align-items: flex-end;
+	width: 100%;
+	box-sizing: border-box;
+	padding: 0 12px 12px 12px;
+}
+
+.mytheme .um-filter > * {
+	margin-right: 14px;
+}
+
+.mytheme .um-filter .v-caption,
+.mytheme .um-foot .v-caption,
+.mytheme .um-window .v-caption {
+	color: #606266;
+	font-size: 13px;
+}
+
+/* ---------------- 表格 ---------------- */
+.mytheme .um-grid {
+	background: #fff;
+	border: 1px solid #ebeef5;
+	border-radius: 8px;
+	overflow: hidden;
+}
+
+.mytheme .um-grid .v-grid-header .v-grid-cell {
+	background: #f5f7fa;
+	color: #606266;
+	font-size: 13px;
+	font-weight: 600;
+	border-bottom: 1px solid #ebeef5;
+}
+
+.mytheme .um-grid .v-grid-cell {
+	font-size: 13px;
+	vertical-align: middle;
+	padding-top: 2px;
+	padding-bottom: 2px;
+}
+
+.mytheme .um-grid .v-grid-row:hover .v-grid-cell {
+	background: #f7faff;
+}
+
+.mytheme .um-grid .v-grid-row-selected .v-grid-cell {
+	background: #ecf5ff;
+}
+
+/* 被禁用的账号整行淡化，一眼能从列表里区分出来 */
+.mytheme .um-row-dim {
+	opacity: 0.55;
+}
+
+/* ---------------- 单元格内容 ---------------- */
+.mytheme .um-user-cell {
+	display: inline-flex;
+	align-items: center;
+}
+
+.mytheme .um-avatar {
+	flex: 0 0 auto;
+	width: 28px;
+	height: 28px;
+	line-height: 28px;
+	margin-right: 8px;
+	text-align: center;
+	border-radius: 50%;
+	background: #e8f1ff;
+	color: #2f6fe4;
+	font-weight: 700;
+	font-size: 13px;
+}
+
+.mytheme .um-user-text {
+	display: inline-flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.mytheme .um-user-id {
+	font-weight: 600;
+	color: #303133;
+	line-height: 1.25;
+}
+
+.mytheme .um-user-name {
+	font-size: 12px;
+	color: #909399;
+	line-height: 1.3;
+}
+
+.mytheme .um-tag-admin {
+	display: inline-block;
+	margin-left: 6px;
+	padding: 0 6px;
+	height: 16px;
+	line-height: 15px;
+	font-size: 11px;
+	font-weight: 400;
+	color: #e6a23c;
+	background: #fdf6ec;
+	border: 1px solid #f5dab1;
+	border-radius: 8px;
+}
+
+.mytheme .um-badge {
+	display: inline-block;
+	padding: 0 8px;
+	line-height: 18px;
+	font-size: 12px;
+	border-radius: 10px;
+	border: 1px solid transparent;
+}
+
+.mytheme .um-badge-ok {
+	color: #52c41a;
+	background: #f0f9eb;
+	border-color: #c2e7b0;
+}
+
+.mytheme .um-badge-warn {
+	color: #e6a23c;
+	background: #fdf6ec;
+	border-color: #f5dab1;
+}
+
+.mytheme .um-badge-off {
+	color: #909399;
+	background: #f4f4f5;
+	border-color: #e0e0e2;
+}
+
+.mytheme .um-badge-expired {
+	color: #f56c6c;
+	background: #fef0f0;
+	border-color: #fbc4c4;
+}
+
+.mytheme .um-expire {
+	color: #606266;
+}
+
+.mytheme .um-expire-warn {
+	color: #e6a23c;
+	font-weight: 600;
+}
+
+.mytheme .um-expire-hint {
+	margin-left: 6px;
+	font-size: 12px;
+	color: #c0c4cc;
+}
+
+.mytheme .um-expire-hint-warn {
+	margin-left: 6px;
+	font-size: 12px;
+	color: #e6a23c;
+}
+
+.mytheme .um-expire-forever {
+	color: #909399;
+}
+
+/* ---------------- 行内操作按钮 ---------------- */
+.mytheme .um-op-cell {
+	display: flex;
+	align-items: center;
+}
+
+/* 这里必须带上 .v-button，否则压不住 Valo 给按钮加的底色、边框与固定高度 */
+.mytheme .um-op-btn.v-button {
+	height: auto;
+	min-height: 0;
+	padding: 0 2px;
+	margin-right: 10px;
+	border: none;
+	background: none;
+	box-shadow: none;
+	color: #2f6fe4;
+	font-size: 12px;
+	font-weight: 400;
+	line-height: 1.4;
+}
+
+.mytheme .um-op-btn.v-button:before {
+	display: none;
+}
+
+.mytheme .um-op-btn.v-button:hover {
+	text-decoration: underline;
+	background: none;
+}
+
+.mytheme .um-op-danger.v-button {
+	color: #f56c6c;
+}
+
+/* 内置管理员那一行的「受保护」标记：做成不描边的灰底胶囊，
+   避免看起来像另一个可以点的操作按钮 */
+.mytheme .um-op-lock {
+	display: inline-block;
+	padding: 0 8px;
+	border: 1px solid #dcdfe6;
+	border-radius: 9px;
+	background: #f4f6f8;
+	color: #909399;
+	font-size: 12px;
+	line-height: 18px;
+	white-space: nowrap;
+	cursor: default;
+}
+
+/* ---------------- 底部：分页与批量 ---------------- */
+.mytheme .um-foot {
+	display: -webkit-box;
+	display: -ms-flexbox;
+	display: flex;
+	-ms-flex-wrap: wrap;
+	flex-wrap: wrap;
+	-ms-flex-align: end;
+	align-items: flex-end;
+	-ms-flex-pack: justify;
+	justify-content: space-between;
+	width: 100%;
+	box-sizing: border-box;
+	padding: 10px 12px 0 12px;
+}
+
+.mytheme .um-pager,
+.mytheme .um-batch {
+	display: -webkit-box;
+	display: -ms-flexbox;
+	display: flex;
+	-ms-flex-align: end;
+	align-items: flex-end;
+}
+
+.mytheme .um-pager > *,
+.mytheme .um-batch > * {
+	margin-right: 10px;
+}
+
+.mytheme .um-page-info,
+.mytheme .um-selection {
+	font-size: 13px;
+	color: #606266;
+	padding-bottom: 6px;
+}
+
+.mytheme .um-selection {
+	color: #2f6fe4;
+}
+
+/* ---------------- 窗口与表单 ---------------- */
+.mytheme .um-window {
+	background: #fff;
+}
+
+.mytheme .um-window .v-widget {
+	font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", -apple-system, sans-serif;
+}
+
+.mytheme .um-form-row {
+	display: -webkit-box;
+	display: -ms-flexbox;
+	display: flex;
+	width: 100%;
+	box-sizing: border-box;
+	margin-bottom: 12px;
+}
+
+.mytheme .um-form-row > * {
+	-ms-flex: 1 1 0;
+	flex: 1 1 0;
+	min-width: 0;
+	margin-right: 14px;
+}
+
+.mytheme .um-form-row > *:last-child {
+	margin-right: 0;
+}
+
+.mytheme .um-window-hint {
+	font-size: 12px;
+	line-height: 1.7;
+	color: #909399;
+	margin: 2px 0 14px 0;
+}
+
+.mytheme .um-window-buttons .v-button {
+	margin-left: 10px;
+}
+
+.mytheme .um-column-group .v-select-optiongroup-horizontal {
+	display: block;
+}
+
+/* ---------------- 编辑窗两列表单的对齐 ---------------- */
+/* Vaadin 8 的 CssLayout 既不给子组件套 .v-slot，也不套 .v-captionwrapper：它把带标题
+ * 组件的标题当作「独立子元素」插到控件前面（客户端 CssLayoutConnector.updateCaption()
+ * 里的 getWidget().insert(caption, widgetPosition)）。所以一行 .um-form-row 里其实是
+ * [标题][控件][标题][控件] 四个元素，父级那条 flex 行按子元素平分宽度，标题就会吃掉
+ * 一半宽度、输入框被压成四分之一，左边缘还跟着标题字数左右漂。
+ * 现在 Java 侧给每一列包了 .um-form-col，行里只剩两个子元素；这里再钉死列内的排版。 */
+/* 槽位兜底：行本身是 VerticalLayout 的子组件，外面套着 .v-slot。Valo 那条
+ * `.v-vertical > .v-slot` 只给了 display:block，没给宽度；万一某处父布局类名对不上，
+ * .v-slot 会退回基线那条 `display:inline-block`（宽度收缩成内容宽）→ 同一容器里每行宽度
+ * 各不相同，第二列的左边缘就会在行与行之间左右漂。显式写一遍宽度，让列边界与父布局无关。 */
+.mytheme .um-window > .v-slot,
+.mytheme .um-window > .v-expand > .v-slot {
+	display: block;
+	width: 100%;
+}
+
+.mytheme .um-form-row {
+	display: -webkit-box;
+	display: -ms-flexbox;
+	display: flex;
+	-ms-flex-flow: row nowrap;
+	flex-flow: row nowrap;
+	-ms-flex-align: start;
+	align-items: flex-start;
+	width: 100%;
+}
+
+.mytheme .um-form-col {
+	display: block;
+	width: 100%;
+	box-sizing: border-box;
+}
+
+/* 标题独占一行：它是 inline-block，不设 block 就会和输入框挤在同一行，
+   而标题宽度各不相同 → 控件左边缘参差不齐 */
+.mytheme .um-form-col > .v-caption {
+	display: block;
+	width: 100%;
+	box-sizing: border-box;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* 标题后面那个控件铺满本列，不管它自己有没有带 100% 宽度 */
+.mytheme .um-form-col > .v-caption + * {
+	width: 100% !important;
+	box-sizing: border-box;
+}
+
+/* ---------------- 日期选择弹窗底色 ---------------- */
+/* 兜底：Valo 只把不透明白底挂在最外层 `.v-datefield-popup`（第 7587 行那条
+ * `background-color: white`），弹窗里的 GWT popupContent 层和 .v-datefield-calendarpanel
+ * 都没有自己的底色。CSS 上子层透明本来会透出父层的白，但只要有任意一条后置规则把
+ * 某一层刷成半透明/透明，弹窗就会整体透底。这里把整条链路都用 !important 钉成白，
+ * 让弹窗底色不再依赖"父层那条 white 有没有被覆盖"。 */
+.mytheme .v-datefield-popup,
+.mytheme .v-datefield-popup .popupContent,
+.mytheme .v-datefield-popup .v-datefield-calendarpanel {
+	background-color: #fff !important;
+}
+

@@ -13,6 +13,7 @@ import com.so.component.ComponentUtil;
 import com.so.entity.User;
 import com.so.mapper.UserDao;
 import com.so.util.Constants;
+import com.so.util.DbInitializer;
 import com.so.util.Util;
 import com.vaadin.event.ShortcutAction.KeyCode;
 import com.vaadin.navigator.View;
@@ -238,6 +239,16 @@ public class LoginView extends VerticalLayout implements View {
 			User user = userDao.selectById(userName);
 			if (null != user && null != user.getPassword()
 					&& user.getPassword().equals(Util.getSm3DigestStr(pwd))) {
+				// 密码正确之后才提示"被禁用 / 已过期"：密码错误的场景不该暴露账号状态。
+				// 这段校验是 user_flag 与 expire_time 真正生效的地方，少了它，
+				// 用户管理页上的"禁用"只是个不生效的标签。
+				String reason = user.unavailableReason();
+				if (null != reason) {
+					showError(reason);
+					pwdFld.setValue("");
+					logger.info("用户{}被拒绝登录：{}", userName, reason);
+					return;
+				}
 				hideError();
 				VaadinSession.getCurrent().setAttribute("userName", userName);
 				VaadinSession.getCurrent().setAttribute("user", user);
@@ -270,6 +281,10 @@ public class LoginView extends VerticalLayout implements View {
 			logger.warn("首次启动，进行数据库初始化。。。");
 			init(dataSource);
 		}
+		// 无论库是刚建出来的还是沿用旧库，都保证内置管理员存在且能登录。
+		// 这一步是"进得来"的最后保险：不再依赖运行目录下的 users.properties，
+		// 那个文件丢了、没拷、编码错了都不会再把系统锁在门外。
+		DbInitializer.ensureAdminUser(dataSource, userDao);
 		// 补齐 server.sh（运行目录 + bin 目录），以 WAR 方式部署时 main 不会执行
 		try {
 			Util.ensureServerScript();
