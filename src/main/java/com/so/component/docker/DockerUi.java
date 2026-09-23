@@ -44,7 +44,21 @@ public final class DockerUi {
         void onFailure(Exception e);
     }
 
-    /** 「正在执行」提示的开关 */
+    /**
+     * 「正在执行」提示的开关。
+     * <p>
+     * <b>实现这个接口时注意：</b>不要手写无资格的转发调用。
+     * <pre>
+     * new DockerUi.Busy() {
+     *     public void setBusy(boolean busy, String text) {
+     *         setBusy(busy, text);   // 错：解析到匿名类自身，无限递归
+     *     }
+     * }
+     * </pre>
+     * 编译期毫无提示，运行时直接 {@code StackOverflowError}（2026-09-22 实际踩过）。
+     * 正确写法二选一：换一个方法名转发（如 {@code owner.setBusy(...)}），
+     * 或写全限定形式 {@code OutClass.this.setBusy(...)}。
+     */
     public interface Busy extends Serializable {
         void setBusy(boolean busy, String text);
     }

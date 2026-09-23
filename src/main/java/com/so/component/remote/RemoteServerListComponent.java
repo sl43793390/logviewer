@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.so.component.CommonComponent;
 import com.so.component.ComponentUtil;
 import com.so.component.RemoteSSHComponent;
+import com.so.component.docker.DockerMgmtComponent;
 import com.so.component.util.FileUploader;
 import com.so.component.util.TabSheetUtil;
 import com.so.controller.SshHandler;
@@ -126,6 +127,14 @@ public class RemoteServerListComponent extends CommonComponent {
 			sshBtn.addClickListener(e ->{
 				addRemoteSSHTab(info);
 			});
+			// 跳到 docker 的【容器和镜像管理】并直接用这一行的机器连上。
+			// 这一行原来只有 SSH / 文件 / 监控三个入口，要管 docker 得先去菜单里选页、
+			// 再到下拉框里重新把这台机器挑一遍，等于把同一份连接信息录了两次。
+			Button dockerBtn = ComponentFactory.getStandardButton("容器和镜像管理");
+			dockerBtn.setData(info);
+			dockerBtn.addClickListener(e ->{
+				addDockerMgmtTab(info);
+			});
 			Button fileBtn = ComponentFactory.getStandardButton("文件管理");
 			fileBtn.setData(info);
 			fileBtn.addClickListener(e ->{
@@ -138,12 +147,13 @@ public class RemoteServerListComponent extends CommonComponent {
 			});
 			Label descLb = ComponentFactory.getStandardLabel("用户："+info.getIdUser()+"|"+(info.getDesc() == null ? "":info.getDesc()));
 			abs.addComponent(serverLb);
-			abs.addComponent(manageBtn,"left:155px;");
-			abs.addComponent(sshBtn,"left:300px;");
-			abs.addComponent(fileBtn,"left:440px;");
-			abs.addComponent(monitorBtn,"left:578px;");
-			abs.addComponent(deleteBtn,"left:710px;");
-			abs.addComponent(descLb,"left:810px;");
+			abs.addComponent(manageBtn,"left:150px;");
+			abs.addComponent(sshBtn,"left:276px;");
+			abs.addComponent(dockerBtn,"left:399px;");
+			abs.addComponent(fileBtn,"left:573px;");
+			abs.addComponent(monitorBtn,"left:699px;");
+			abs.addComponent(deleteBtn,"left:825px;");
+			abs.addComponent(descLb,"left:915px;");
 			if (i == serverListFromDb.size()-1) {
 				serverLayout.setExpandRatio(abs, 1);
 			}
@@ -208,6 +218,28 @@ public class RemoteServerListComponent extends CommonComponent {
 		bean.initContent();
 		bean.registerHandler();
 		TabSheetUtil.getMainTabsheet().addTab(bean,"SSH-"+data.getIdHost()).setClosable(true);
+		TabSheetUtil.getMainTabsheet().setSelectedTab(bean);
+	}
+
+	/**
+	 * 跳到 docker 的【容器和镜像管理】页（{@code docker.DockerMgmtComponent}），
+	 * 并把这一行的机器预置进去、自动建立连接。
+	 * <p>
+	 * 每个 tab 都独占一条 SSH 通道（页面关闭时由 DockerMgmtComponent.detach 收掉），
+	 * 所以同一台机器重复点只切回已开的那个 tab，不再叠一条新连接。
+	 */
+	private void addDockerMgmtTab(ConnectionInfo data) {
+		String caption = "Docker-" + data.getIdHost();
+		if (TabSheetUtil.checkComponent(caption)) {
+			TabSheetUtil.navigateTo(caption);
+			return;
+		}
+		DockerMgmtComponent bean = ComponentUtil.applicationContext.getBean(DockerMgmtComponent.class);
+		bean.setPresetHost(data);
+		bean.initLayout();
+		bean.initContent();
+		bean.registerHandler();
+		TabSheetUtil.getMainTabsheet().addTab(bean, caption).setClosable(true);
 		TabSheetUtil.getMainTabsheet().setSelectedTab(bean);
 	}
 

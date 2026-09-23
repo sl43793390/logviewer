@@ -1,6 +1,7 @@
 package com.so.ui;
 
 import com.so.component.remote.RemoteLoginComponent;
+import com.so.component.remote.RemoteServerListComponent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -57,6 +58,8 @@ public class LogCheckView extends VerticalLayout implements View {
 	private LogSearchComponent logSearchComponent;
 	@Autowired
 	private UserGuideComponent userGuideComponent;
+	@Autowired
+	private RemoteServerListComponent remoteServerListComponent;
 	@Override
 	public void enter(ViewChangeEvent event) {
 		addHeader();
@@ -135,9 +138,14 @@ public class LogCheckView extends VerticalLayout implements View {
 		logSearchComponent.initLayout();
 		logSearchComponent.initContent();
 		logSearchComponent.registerHandler();
+
+		remoteServerListComponent.initLayout();
+		remoteServerListComponent.initContent();
+		remoteServerListComponent.registerHandler();
 		mainTabsheet.addTab(userGuideComponent, "使用说明");
 		mainTabsheet.addTab(logSearchComponent, "本地日志搜索");
-		mainTabsheet.setSelectedTab(logSearchComponent);
+		mainTabsheet.addTab(remoteServerListComponent, "服务器列表");
+		mainTabsheet.setSelectedTab(remoteServerListComponent);
 		setExpandRatio(mainTabsheet, 1);
 		//当关闭tab时关闭远程连接会话
 		mainTabsheet.addComponentDetachListener(e ->{

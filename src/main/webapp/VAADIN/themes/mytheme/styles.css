@@ -18128,12 +18128,12 @@ element.style {
 /* ---------------- 提示文案 ---------------- */
 
 .mytheme .docker-hint {
-	display: block;
+	/* display: block; */
 	width: 100%;
 	box-sizing: border-box;
-	font-size: 12px;
-	color: #8a95a5;
-	line-height: 18px;
+	font-size: 14px;
+	color: black;
+	line-height: 28px;
 	white-space: normal;
 }
 
@@ -18312,5 +18312,280 @@ element.style {
 .mytheme .docker-daemon-cmd.v-readonly textarea {
 	color: #333 !important;
 }
+
+/* ==================================================================
+ * Docker-Compose 管理页（2026-09-22 新增）
+ *
+ * 结构见 com.so.component.docker.DockerComposeComponent 与 ComposeYamlEditor。
+ * 编辑器那一层是「透明 textarea 叠在高亮 pre 上」，两层必须共用同一套
+ * font-family / font-size / line-height / padding，任何一项不一致光标就会跟文字错位。
+ * 所以下面把这三个值提成一样，改动时务必三处一起改：
+ *   .compose-editor-gutter / .compose-editor-hl / .compose-editor-input-host textarea
+ * ================================================================== */
+
+/* 状态色：异常（有容器以非 0 退出）不同于「已停止」，要能一眼分辨 */
+.mytheme .docker-state-error {
+	color: #c0392b;
+}
+
+/* ---------------- 项目列表 ---------------- */
+
+.mytheme .compose-status-cell {
+	display: block;
+	width: 100%;
+	box-sizing: border-box;
+	white-space: normal;
+	line-height: 20px;
+}
+
+.mytheme .compose-status-cell .v-label {
+	display: inline;
+	white-space: normal;
+}
+
+.mytheme .compose-warn-label {
+	display: block;
+	width: 100%;
+	box-sizing: border-box;
+	font-size: 12px;
+	color: #b26a00;
+	background-color: #fdf6e8;
+	border-left: 3px solid #e0a33e;
+	padding: 3px 8px;
+	line-height: 20px;
+	white-space: normal;
+}
+
+.mytheme .compose-env-label {
+	display: block;
+	width: 100%;
+	box-sizing: border-box;
+	font-size: 12px;
+	padding: 3px 8px;
+	line-height: 20px;
+	white-space: normal;
+}
+
+/* ---------------- YAML 编辑器 ---------------- */
+
+.mytheme .compose-editor-shell {
+	position: relative;
+	overflow: hidden;
+	width: 100%;
+	background-color: #fbfcfd;
+	border: 1px solid #d8dfe7;
+	border-radius: 3px;
+	box-sizing: border-box;
+}
+
+.mytheme .compose-editor-gutter {
+	position: absolute;
+	top: 0;
+	left: 0;
+	bottom: 0;
+	width: 46px;
+	overflow: hidden;
+	box-sizing: border-box;
+	padding: 8px 6px 8px 0;
+	text-align: right;
+	white-space: pre;
+	font-family: Consolas, "Courier New", monospace;
+	font-size: 12px;
+	line-height: 18px;
+	color: #a7b1be;
+	background-color: #f1f4f7;
+	border-right: 1px solid #e2e8ee;
+	-webkit-user-select: none;
+	user-select: none;
+	will-change: transform;
+}
+
+/* 高亮层：视觉上真正的文字在这里 */
+.mytheme .compose-editor-hl {
+	position: absolute;
+	top: 0;
+	left: 46px;
+	right: 0;
+	bottom: 0;
+	margin: 0;
+	padding: 8px;
+	overflow: hidden;
+	box-sizing: border-box;
+	white-space: pre;
+	tab-size: 2;
+	font-family: Consolas, "Courier New", monospace;
+	font-size: 12px;
+	line-height: 18px;
+	color: #2c3e50;
+	background-color: transparent;
+	border: 0;
+	pointer-events: none;
+}
+
+/* 输入层：绝对定位覆盖在高亮层之上，文字透明只留光标 */
+.mytheme .compose-editor-input-host,
+.mytheme .compose-editor-shell > textarea {
+	position: absolute;
+	top: 0;
+	left: 46px;
+	right: 0;
+	bottom: 0;
+	display: block !important;
+	box-sizing: border-box;
+	border: 0 !important;
+	box-shadow: none !important;
+	border-radius: 0 !important;
+	background-color: transparent !important;
+	overflow: auto;
+}
+
+.mytheme .compose-editor-shell textarea {
+	display: block !important;
+	width: 100% !important;
+	height: 100% !important;
+	max-width: none !important;
+	margin: 0 !important;
+	padding: 8px !important;
+	box-sizing: border-box;
+	border: 0 !important;
+	resize: none !important;
+	outline: none !important;
+	white-space: pre;
+	overflow: auto;
+	tab-size: 2;
+	font-family: Consolas, "Courier New", monospace;
+	font-size: 12px;
+	line-height: 18px;
+	color: #2c3e50;
+	background-color: transparent !important;
+	caret-color: #1b4b73;
+}
+
+/* 高亮层建好之后才让输入层的文字透明（JS 加类），脚本挂了编辑器依然可用 */
+.mytheme .compose-editor-ready textarea {
+	color: transparent !important;
+}
+
+.mytheme .compose-editor-ready textarea::selection {
+	background-color: #bcd9f5;
+}
+
+/* YAML token 配色（浅色主题） */
+.mytheme .compose-editor-hl .k {
+	color: #0b5fa5;
+}
+
+.mytheme .compose-editor-hl .p {
+	color: #6b7a8d;
+}
+
+.mytheme .compose-editor-hl .s {
+	color: #b35c00;
+}
+
+.mytheme .compose-editor-hl .n {
+	color: #7b3fbf;
+}
+
+.mytheme .compose-editor-hl .b {
+	color: #7b3fbf;
+	font-weight: bold;
+}
+
+.mytheme .compose-editor-hl .a {
+	color: #7b3fbf;
+	font-style: italic;
+}
+
+.mytheme .compose-editor-hl .c {
+	color: #8a95a5;
+	font-style: italic;
+}
+
+.mytheme .compose-editor-hl .v {
+	color: #1f7a4d;
+	font-weight: bold;
+	background-color: #e8f6ee;
+	border-radius: 2px;
+}
+
+/* 行号 / 行级 diff */
+.mytheme .compose-diff-area,
+.mytheme .compose-diff-area textarea {
+	font-family: Consolas, "Courier New", monospace;
+	font-size: 12px;
+	line-height: 18px;
+	color: #2c3e50 !important;
+	opacity: 1 !important;
+}
+
+.mytheme .compose-diff-pre {
+	margin: 0;
+	padding: 8px;
+	overflow: auto;
+	white-space: pre;
+	font-family: Consolas, "Courier New", monospace;
+	font-size: 12px;
+	line-height: 18px;
+	background-color: #fbfcfd;
+	border: 1px solid #d8dfe7;
+	border-radius: 3px;
+	color: #2c3e50;
+	box-sizing: border-box;
+}
+
+.mytheme .compose-diff-pre .add {
+	display: inline-block;
+	width: 100%;
+	background-color: #e7f6ec;
+	color: #1f7a4d;
+}
+
+.mytheme .compose-diff-pre .del {
+	display: inline-block;
+	width: 100%;
+	background-color: #fdeced;
+	color: #b02a37;
+}
+
+.mytheme .compose-diff-pre .ln {
+	color: #a7b1be;
+}
+
+.mytheme .compose-diff-pre .hunk {
+	color: #0b5fa5;
+}
+
+/* 依赖关系图 */
+.mytheme .compose-graph-box {
+	display: block;
+	width: 100%;
+	overflow: auto;
+	background-color: #fbfcfd;
+	border: 1px solid #d8dfe7;
+	border-radius: 3px;
+	padding: 6px;
+	box-sizing: border-box;
+}
+
+.mytheme .compose-graph-box svg {
+	display: block;
+}
+
+/* 概览里的小卡片 */
+.mytheme .compose-kv {
+	display: block;
+	width: 100%;
+	box-sizing: border-box;
+	font-size: 12px;
+	color: #44546a;
+	line-height: 20px;
+	white-space: normal;
+}
+
+.mytheme .compose-kv b {
+	color: #1b3a57;
+}
+
 
 

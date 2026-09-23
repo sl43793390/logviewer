@@ -89,6 +89,18 @@ public class DockerMgmtComponent extends CommonComponent {
     /** 同一时刻只允许有一个「Docker 不可用」弹窗 */
     private DockerDaemonWindow daemonWindow;
 
+    /** 下拉框当前承载的候选主机，自动连预置主机时要在里面找对应的那一项 */
+    private List<ConnectionInfo> candidateHosts = new ArrayList<ConnectionInfo>();
+    /**
+     * 从「免登录服务器列表」跳进来时带过来的目标主机。
+     * <p>
+     * 这一条是为了让那个跳转按钮真的「一步到位」：用户点的是某一行的机器，
+     * 落到的页面就得已经连着那一台，而不是让他再到下拉框里重新挑一遍。
+     */
+    private ConnectionInfo presetHost;
+    /** 预置主机的自动连接只做一次（attach 与 registerHandler 都会来敲这个门） */
+    private boolean autoConnectPending;
+
     @Override
     public void initLayout() {
         mainPanel = new Panel();
@@ -193,7 +205,13 @@ public class DockerMgmtComponent extends CommonComponent {
 
     @Override
     public void initContent() {
-        hostCombo.setItems(loadCandidateHosts());
+        candidateHosts = loadCandidateHosts();
+        // 跳转带过来的主机可能既不在数据库也不在 remoteServerList.conf 里（比如配置文件刚被改过），
+        // 那就补进候选列表，否则下拉框找不到它会静默回退成"未选择"。
+        if (null != presetHost && null == matchHost(candidateHosts, presetHost)) {
+            candidateHosts.add(presetHost);
+        }
+        hostCombo.setItems(candidateHosts);
     }
 
     /**
@@ -253,6 +271,59 @@ public class DockerMgmtComponent extends CommonComponent {
         // 手动检测：用户可能自己在服务器上把 docker 起起来了，或者刚装完
         checkBtn.addClickListener(e -> checkDaemon(true));
         noticeStartBtn.addClickListener(e -> openDaemonWindow(null));
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* 从服务器列表跳转过来时的预置主机                                      */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * 预置目标主机并自动连接。由「免登录服务器列表」的跳转按钮调用。
+     * <p>
+     * 真正的连接动作不在这里发起：拿 bean 的时候组件还没挂到 UI 上，
+     * 后面 connect() 的后台线程要回头用 UI 渲染。这里只记下"要连哪台"，
+     * 等 {@link #attach()} 之后（也就是 tab 真的加上去了）再动手。
+     */
+    public void setPresetHost(ConnectionInfo info) {
+        this.presetHost = info;
+        this.autoConnectPending = (null != info);
+    }
+
+    @Override
+    public void attach() {
+        super.attach();
+        tryAutoConnect();
+    }
+
+    /** 预置主机已就绪就自动选上并连接；没预置、或已经连过，就什么都不做 */
+    private void tryAutoConnect() {
+        if (!autoConnectPending || null == presetHost || null == hostCombo || null == candidateHosts) {
+            return;
+        }
+        ConnectionInfo target = matchHost(candidateHosts, presetHost);
+        if (null == target) {
+            target = presetHost;
+            candidateHosts.add(target);
+            hostCombo.setItems(candidateHosts);
+        }
+        // 先落标记再动手：connect() 失败也不能反复重连，一次就够
+        autoConnectPending = false;
+        hostCombo.setValue(target);
+        connect();
+    }
+
+    /** 按 host:port 找候选列表里对应的那一项（同一个 IP 可能配了不同的 SSH 端口） */
+    private static ConnectionInfo matchHost(List<ConnectionInfo> list, ConnectionInfo wanted) {
+        if (null == list || null == wanted || StrUtil.isBlank(wanted.getIdHost())) {
+            return null;
+        }
+        String key = wanted.getIdHost() + ":" + portOf(wanted);
+        for (ConnectionInfo info : list) {
+            if (key.equals(info.getIdHost() + ":" + portOf(info))) {
+                return info;
+            }
+        }
+        return null;
     }
 
     /**

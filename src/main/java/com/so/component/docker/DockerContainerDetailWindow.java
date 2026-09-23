@@ -162,6 +162,25 @@ public class DockerContainerDetailWindow extends Window {
         UI.getCurrent().addWindow(this);
     }
 
+    /**
+     * 带初始页签的构造：compose 的容器列表里「日志 / 终端 / 监控」是分开的入口，
+     * 点进去应该直接落在对应的页签上，而不是每次都先看到「详情」。
+     *
+     * @param initialTab 页签标题（详情 / 日志 / 终端 / 资源监控 / 文件），为空则保持默认
+     */
+    public DockerContainerDetailWindow(DockerContainer container, DockerService service, String initialTab) {
+        this(container, service);
+        if (StrUtil.isBlank(initialTab)) {
+            return;
+        }
+        for (int i = 0; i < tabs.getComponentCount(); i++) {
+            if (initialTab.equals(tabs.getTab(i).getCaption())) {
+                tabs.setSelectedTab(i);
+                return;
+            }
+        }
+    }
+
     @Override
     public void detach() {
         monitoring = false;
