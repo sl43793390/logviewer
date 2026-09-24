@@ -814,7 +814,12 @@ public class ComposeService {
             // 显式给一个合法项目名，预览结果才干净
             temp.setName("compose-check");
             temp.setFiles(orderFiles(files.keySet()));
-            return validate(temp);
+            ExecOutcome outcome = validate(temp);
+            // compose 的报错 / 警告里带的是这个随机临时目录的全路径，对用户没有意义
+            // （还会让人以为项目就建在那儿），统一抹掉只留文件名
+            return new ExecOutcome(outcome.getExitCode(),
+                    stripTempPrefix(outcome.getStdout(), dir),
+                    stripTempPrefix(outcome.getStderr(), dir));
         } finally {
             try {
                 executor.exec("rm -rf " + DockerExecutor.q(dir));
@@ -822,6 +827,20 @@ public class ComposeService {
                 log.warn("清理临时校验目录 {} 失败：{}", dir, e.getMessage());
             }
         }
+    }
+
+    /**
+     * 把 compose 输出里的临时校验目录前缀抹掉。
+     * <p>
+     * 不抹的话用户会看到
+     * {@code /tmp/.lv-compose-check-9f2c…/docker-compose.yml: the attribute `version` is obsolete}，
+     * 既长又容易被误解成"项目文件在那个目录里"。
+     */
+    private static String stripTempPrefix(String text, String dir) {
+        if (StrUtil.isBlank(text)) {
+            return "";
+        }
+        return text.replace(dir + "/", "").replace(dir, "");
     }
 
     /**
@@ -1888,6 +1907,22 @@ public class ComposeService {
         return text;
     }
 
+    /** 去掉结尾的所有 CR / LF（段落正文末尾的空行是标记协议带来的，不是命令输出的一部分） */
+    private static String trimTrailingNewlines(String text) {
+        if (null == text) {
+            return "";
+        }
+        int end = text.length();
+        while (end > 0) {
+            char c = text.charAt(end - 1);
+            if (c != '\n' && c != '\r') {
+                break;
+            }
+            end--;
+        }
+        return text.substring(0, end);
+    }
+
     /** SFTP 通道（导出/上传用），与 {@code DockerExecutor.ssh()} 同一份连接 */
     public SSHClientUtil ssh() {
         return executor.ssh();
@@ -1923,7 +1958,16 @@ public class ComposeService {
                 } catch (NumberFormatException e) {
                     exitCode = -1;
                 }
-                text = text.substring(0, rcAt);
+                // 只摘掉 __LV_RC__<code> 这一行本身，它后面的 OUT / ERR 段落必须留着。
+                // runSeparated 里 RC 是打在两个段落**之前**的，原来这里写 substring(0, rcAt)
+                // 等于把正文整段丢掉 —— 于是所有 runSeparated 的调用方（校验预览、config 解析、
+                // 服务/端口盘点、compose ls 发现外来项目）拿到的 stdout / stderr 永远是空串，
+                // 界面表现为「点校验只跳到✓，预览框一片空白」。
+                // 摘行而不是截断，也让这个方法对标记顺序不再敏感。
+                int lineStart = text.lastIndexOf('\n', rcAt);
+                String before = (lineStart < 0) ? "" : text.substring(0, lineStart);
+                String after = (end < 0) ? "" : text.substring(end);
+                text = before + after;
             }
             return new ExecOutcome(exitCode, section(text, MARK_OUT_BEGIN, MARK_OUT_END),
                     section(text, MARK_ERR_BEGIN, MARK_ERR_END));
@@ -1937,7 +1981,9 @@ public class ComposeService {
             int start = from + begin.length();
             int to = text.indexOf(end, start);
             String body = to < 0 ? text.substring(start) : text.substring(start, to);
-            return trimOneTrailingNewline(body.startsWith("\n") ? body.substring(1) : body);
+            // 脚本在 END 标记前也打一个换行，正文本身还可能自带行尾换行 —— 全去掉，
+            // 否则预览框 / 控制台里会各多一行空行
+            return trimTrailingNewlines(body.startsWith("\n") ? body.substring(1) : body);
         }
 
         public int getExitCode() {

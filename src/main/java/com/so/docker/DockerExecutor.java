@@ -526,6 +526,25 @@ public class DockerExecutor implements Closeable {
         return result.getOutput();
     }
 
+    /**
+     * 执行一段直接拼在 docker 前缀后面的<b>原始</b>子命令。
+     * <p>
+     * 和 {@link #docker(String...)} 的区别是<b>不做 shell 转义</b>：用户在「创建容器」
+     * 弹窗里粘贴的是一整条命令行（{@code run -d --name nginx -p 8080:80 nginx:1.25}），
+     * 走参数数组会被每个参数各套一层单引号，docker 直接认不出来。
+     * <p>
+     * 校验（只放行 run / create、拦住 shell 连接符）由调用方
+     * {@code DockerService.runDockerCommand} 负责；这里只保证 daemon 不可用时
+     * 一个字节都不发出去。
+     */
+    public CmdResult dockerRaw(String subCommand) throws IOException {
+        if (StrUtil.isBlank(subCommand)) {
+            throw new IOException("docker 子命令为空");
+        }
+        ensureDaemonReady();
+        return exec(commandPrefix + " " + subCommand);
+    }
+
     /** 执行 docker 子命令，按行返回非空输出行 */
     public List<String> dockerLines(String... args) throws IOException {
         CmdResult result = docker(args);

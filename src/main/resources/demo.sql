@@ -122,3 +122,20 @@ CREATE TABLE "tomcat_info" (
                                "cd_description" TEXT(150),
                                PRIMARY KEY ("id_host", "tomcat_id")
 );
+
+-- ----------------------------
+-- Table structure for app_setting（界面偏好 / 零散状态的通用 kv 表）
+--   setting_key    键，由调用方约定，例如 compose.pref.admin；主键
+--   setting_value  值，纯文本；compose 偏好是"lastHost=..." + 每行一条历史根目录
+--   update_time    最后写入时间，文本列 yyyy-MM-dd HH:mm:ss
+--
+-- 注意：这张表**不需要手工执行本脚本**。AppSettingStore 在容器启动时
+-- （@PostConstruct）会自己 CREATE TABLE IF NOT EXISTS 建出来，写在这里只是
+-- 让 demo.db 的表结构文档保持完整。这一段不 DROP，重复执行也不会影响已有偏好。
+-- ----------------------------
+CREATE TABLE IF NOT EXISTS "app_setting" (
+                               "setting_key" TEXT(191) NOT NULL,
+                               "setting_value" TEXT,
+                               "update_time" TEXT(32),
+                               PRIMARY KEY ("setting_key")
+);

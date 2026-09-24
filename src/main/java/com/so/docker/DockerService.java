@@ -141,6 +141,114 @@ public class DockerService {
         return StrUtil.trimToEmpty(output);
     }
 
+    /** 「创建容器」弹窗允许执行的 docker 子命令 */
+    private static final List<String> RUN_SUBCOMMANDS = Arrays.asList("run", "create");
+
+    /**
+     * 执行用户在「创建容器」弹窗里粘贴的整条 docker 命令，返回命令输出。
+     * <p>
+     * 与 {@link #createContainer(DockerRunSpec)} 的关系：那个是表单拼参数，这个是把
+     * 用户手里的命令行原样执行 —— 参数不再由界面二次解释，用户贴什么就是什么。
+     */
+    public String runDockerCommand(String rawCommand) throws IOException {
+        String subCommand = normalizeRunCommand(rawCommand);
+        DockerExecutor.CmdResult result = executor.dockerRaw(subCommand);
+        if (!result.isOk()) {
+            throw new IOException("docker " + firstWord(subCommand) + " 执行失败：" + result.errorMessage());
+        }
+        return StrUtil.trimToEmpty(result.getOutput());
+    }
+
+    /**
+     * 把用户粘贴的命令规范化成「能直接拼在 docker 前缀后面的子命令」，并做安全检查。
+     * <p>
+     * 接受 {@code docker run ...}、{@code sudo docker run ...}、
+     * {@code /usr/bin/docker run ...}，也接受只写 {@code run ...}，以及多行带
+     * {@code \} 续行的写法（从文档里复制过来的命令基本都是这种）。
+     * <p>
+     * <b>只放行 run / create。</b>这个弹窗的语义就是"创建容器"，放开成任意 docker
+     * 子命令没有意义；更要紧的是不能放开成任意 shell 命令 —— 那等于在界面上开了
+     * 一个绕过菜单权限的后门（要敲别的命令请走「SSH 管理」）。
+     *
+     * @return 去掉 docker 前缀后的子命令，例如 {@code run -d --name nginx nginx:1.25}
+     * @throws IOException 校验不通过；message 是可以直接弹给用户看的人话
+     */
+    public static String normalizeRunCommand(String rawCommand) throws IOException {
+        String text = StrUtil.trimToEmpty(rawCommand);
+        if (text.isEmpty()) {
+            throw new IOException("请先粘贴要执行的 docker run 命令");
+        }
+        // 先摊平成一行：续行符 + 换行 -> 空格，剩下的换行也 -> 空格
+        text = text.replaceAll("\\\\\\s*\\R", " ").replaceAll("\\R+", " ").trim();
+        // 从文档/教程里复制出来的命令常带着 shell 提示符（$ / # / >），一并去掉
+        text = text.replaceFirst("^[>$#]\\s+", "").trim();
+
+        String stripped = text.replaceFirst("^(sudo\\s+(-n\\s+)?)?(\\S*/)?docker(\\.exe)?\\s+", "");
+        if (stripped.equals(text)) {
+            // 没写 docker 前缀：第一个词本来就是 run / create 时放过，否则提示补前缀
+            if (!RUN_SUBCOMMANDS.contains(firstWord(text).toLowerCase())) {
+                throw new IOException("命令要以 docker 开头，例如："
+                        + "docker run -d --name my-nginx -p 8080:80 nginx:1.25");
+            }
+            stripped = text;
+        }
+        String subCommand = stripped.trim();
+        if (subCommand.isEmpty()) {
+            throw new IOException("docker 后面没有子命令，例如：docker run -d nginx:1.25");
+        }
+        String name = firstWord(subCommand).toLowerCase();
+        if (!RUN_SUBCOMMANDS.contains(name)) {
+            throw new IOException("这个弹窗只会执行 docker run / docker create，「" + name
+                    + "」请到「SSH 管理」里执行");
+        }
+        if (containsShellMetachar(subCommand)) {
+            throw new IOException("命令里含有 ; & | ` > < 这类 shell 连接符，"
+                    + "这里只执行一条 docker 命令，组合命令请到「SSH 管理」里执行");
+        }
+        return subCommand;
+    }
+
+    /** 取第一个空白分隔的词 */
+    private static String firstWord(String text) {
+        String trimmed = StrUtil.trimToEmpty(text);
+        int index = trimmed.indexOf(' ');
+        return index < 0 ? trimmed : trimmed.substring(0, index);
+    }
+
+    /**
+     * 命令里（<b>引号外</b>）是否含 shell 连接符。
+     * <p>
+     * 逐个字符扫而不是直接 contains：{@code --env MSG="a;b"} 这种引号里的分号是合法参数，
+     * 一刀切会把正常命令拦下来。
+     */
+    private static boolean containsShellMetachar(String text) {
+        char quote = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '\\') {
+                i++;
+                continue;
+            }
+            if (quote != 0) {
+                if (c == quote) {
+                    quote = 0;
+                }
+                continue;
+            }
+            if (c == '\'' || c == '"') {
+                quote = c;
+                continue;
+            }
+            if (c == ';' || c == '|' || c == '&' || c == '`' || c == '>' || c == '<') {
+                return true;
+            }
+            if (c == '$' && i + 1 < text.length() && text.charAt(i + 1) == '(') {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** {@code docker inspect} 的输出本来就是缩进好的 JSON，原样返回 */
     public String inspect(String id) throws IOException {
         DockerExecutor.CmdResult result = executor.docker("inspect", id);

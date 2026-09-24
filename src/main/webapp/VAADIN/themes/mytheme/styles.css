@@ -18587,5 +18587,91 @@ element.style {
 	color: #1b3a57;
 }
 
+/* ---------------- 容器日志 / 终端的加载遮罩 ----------------
+ * iframe 里的 xterm 页面要现建一条 SSH 通道才有内容，真机上十几秒起步。
+ * 之前这段时间 iframe 是纯黑的，看起来就像"点了没反应"。
+ * 现在 iframe 与遮罩都绝对定位铺满同一个容器，遮罩在上，收到「通道就绪」
+ * 回调后再把遮罩移除（不能把 iframe 设成 invisible —— Vaadin 会把它从 DOM
+ * 里摘掉，websocket 就不会发起了）。
+ */
+
+.mytheme .docker-term-host {
+	position: relative;
+	width: 100%;
+	height: 100%;
+	box-sizing: border-box;
+}
+
+/* 覆盖 .docker-term-frame 原有的静态排版；内层 iframe 一并兜住（不同版本 Vaadin
+ * 的 BrowserFrame 有时渲染成 div 包 iframe，有时根节点就是 iframe） */
+.mytheme .docker-term-host .docker-term-frame,
+.mytheme .docker-term-host .docker-term-frame iframe {
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 100%;
+	height: 100%;
+}
+
+.mytheme .docker-term-mask {
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 100%;
+	height: 100%;
+	z-index: 10;
+	box-sizing: border-box;
+	overflow: hidden;
+	background-color: #ffffff;
+	border: 1px solid #e2e8ee;
+	border-radius: 3px;
+}
+
+.mytheme .docker-term-mask-inner {
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	transform: translate(-50%, -50%);
+	width: 80%;
+	text-align: center;
+}
+
+.mytheme .docker-term-mask-text {
+	display: block;
+	width: 100%;
+	font-size: 14px;
+	line-height: 26px;
+	color: #44546a;
+	white-space: normal;
+	/* 必须写在这一层：Valo 给 .v-label 定了 text-align，靠 .docker-term-mask-inner
+	 * 上的 center 继承不下来（实测 computed textAlign 仍是 left） */
+	text-align: center;
+}
+
+/* 圆形的等待进度条：Valo 的不确定态 ProgressBar 本身就是旋转圆圈
+ * （.v-progressbar-indeterminate 里写死了 24x24 !important + border-radius:100%）。
+ *
+ * 两条不能碰的线：
+ *  1. 不要再声明 width / height —— 同优先级下后写的 !important 会赢，
+ *     把圆圈压成椭圆（踩过：240x12 的斜条）。
+ *  2. <b>不要写 display: ... !important</b>。组件隐藏靠的是内联 display:none，
+ *     而作者样式表里的 !important 优先级高于内联声明，加了之后 setVisible(false)
+ *     就彻底失效 —— 未连接状态下进度圈会一直转。
+ * 居中两条路都留着：block 时靠 auto margin，inline-block 时靠父层的 text-align:center。 */
+.mytheme .docker-load-bar {
+	margin: 20px auto 0 auto;
+}
+
+/* ---------------- 创建容器：命令输入框 ---------------- */
+
+.mytheme .docker-create-command textarea,
+.mytheme .docker-create-command {
+	font-family: Consolas, "Courier New", Menlo, monospace !important;
+	font-size: 13px;
+	line-height: 20px;
+	white-space: pre;
+	overflow: auto;
+}
+
 
 

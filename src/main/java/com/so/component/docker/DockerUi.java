@@ -144,6 +144,22 @@ public final class DockerUi {
     /** daemon 不可用时给用户看的一句话 */
     public static final String daemonDownHint = "目标机的 docker 服务未运行，已停止继续发送命令。";
 
+    /**
+     * 把一段文本送进浏览器剪贴板。
+     * <p>
+     * 内网基本都是 http 访问，{@code navigator.clipboard} 在非安全上下文里根本不存在，
+     * 所以先试现代 API、失败退回 {@code execCommand}。只能在 UI 线程上调用。
+     */
+    public static void copyToClipboard(String text) {
+        String json = com.alibaba.fastjson2.JSON.toJSONString(StrUtil.emptyToDefault(text, ""));
+        com.vaadin.ui.JavaScript.eval("(function(){var t=" + json + ";"
+                + "if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(t);return;}"
+                + "var a=document.createElement('textarea');a.value=t;"
+                + "a.style.position='fixed';a.style.top='-1000px';document.body.appendChild(a);"
+                + "a.select();try{document.execCommand('copy');}catch(e){}"
+                + "document.body.removeChild(a);})();");
+    }
+
     /** 判断异常是不是"daemon 不可用"这一类（连命令都没发出去） */
     public static boolean isDaemonDown(Throwable e) {
         if (e instanceof DockerDaemonDownException) {

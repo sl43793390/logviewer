@@ -4,11 +4,14 @@ import cn.hutool.core.collection.CollectionUtil;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.so.component.CommonComponent;
+import com.so.docker.ComposePreferenceStore;
 import com.so.docker.ComposeService;
 import com.so.docker.DockerExecutor;
 import com.so.docker.DockerService;
+import com.so.docker.model.ComposeBaseDirEntry;
 import com.so.docker.model.ComposeCliInfo;
 import com.so.docker.model.ComposeProject;
+import com.so.docker.model.ComposeUiPreference;
 import com.so.docker.model.DockerDaemonStatus;
 import com.so.entity.ConnectionInfo;
 import com.so.mapper.ConnectionInfoMapper;
@@ -69,14 +72,36 @@ public class DockerComposeComponent extends CommonComponent {
     @Autowired
     private ConnectionInfoMapper connectionInfoMapper;
 
+    @Autowired
+    private ComposePreferenceStore prefStore;
+
     private Panel mainPanel;
     private VerticalLayout contentLayout;
     private ComboBox<ConnectionInfo> hostCombo;
     private TextField prefixField;
     private TextField baseDirField;
+    /** 输入框后面的「历史目录」下拉：用户用过多个根目录时靠它切换 */
+    private ComboBox<ComposeBaseDirEntry> baseDirCombo;
     private Button connectBtn;
     private Button reloadCliBtn;
     private Label busyLabel;
+
+    /** 下拉框当前承载的候选主机，记住的主机要在里面找对应的那一项 */
+    private List<ConnectionInfo> candidateHosts = new ArrayList<ConnectionInfo>();
+    /**
+     * 从「免登录服务器列表」跳进来时带过来的目标主机。
+     * <p>
+     * 与 {@link DockerMgmtComponent} 同样的做法：点某台机器的按钮，落到的页面就该已经连着那一台，
+     * 而不是让人再到下拉框里重新挑一遍。真正的连接要等 tab 挂上 UI 之后（{@link #attach()}）再发起。
+     */
+    private ConnectionInfo presetHost;
+    /** 预置主机的自动连接只做一次 */
+    private boolean autoConnectPending;
+
+    /** 当前登录用户的 compose 偏好（上次用的主机 + 历史根目录），页面初始化时读一次，改动后立刻写回 */
+    private ComposeUiPreference preference;
+    /** 程序性改动 baseDirCombo 时置位，避免它自己的 ValueChangeListener 反过来又去刷项目列表 */
+    private boolean updatingBaseDirCombo;
 
     private Label envLabel;
     private VerticalLayout daemonNotice;
@@ -176,11 +201,14 @@ public class DockerComposeComponent extends CommonComponent {
     }
 
     /**
-     * 项目根目录单独一行。
+     * 项目根目录单独一行：输入框 + 历史目录下拉。
      * <p>
      * 原来它挤在目标服务器那一行里，加上「重测 Compose」按钮之后整行长度过了 1280 屏
-     * 的可视区（实测 1264 的可视宽下最后一个按钮被顶出去 50px），所以把这一项挪下来，
-     * 顺便把输入框放宽、把「根目录下每个项目一个子目录」这个约定写在旁边。
+     * 的可视区（实测 1264 的可视宽下最后一个按钮被顶出去 50px），所以把这一项挪下来。
+     * <p>
+     * 下拉框是后来补的：一台机器上用过的根目录往往不止一个（换项目、换部署批次），
+     * 而根目录决定列表里能看见哪些项目 —— 只靠输入框，换个目录就得手敲一遍全路径，
+     * 换个会话还会忘。选项来自 {@link ComposePreferenceStore} 里按主机记的历史。
      */
     private HorizontalLayout buildBaseDirRow() {
         HorizontalLayout row = ComponentFactory.getHorizontalLayout();
@@ -189,13 +217,27 @@ public class DockerComposeComponent extends CommonComponent {
 
         row.addComponent(ComponentFactory.getStandardLabel("项目根目录："));
         baseDirField = ComponentFactory.getStandardTtextField();
-        baseDirField.setWidth("320px");
+        baseDirField.setWidth("300px");
         baseDirField.setPlaceholder("留空用 $HOME/" + ComposeService.DEFAULT_BASE_DIR_NAME);
         row.addComponent(baseDirField);
 
-        Label hint = ComponentFactory.getStandardLabel("每个项目在根目录下占一个以项目名命名的子目录，compose 文件与 .env 都放里面。");
+        baseDirCombo = ComponentFactory.getStandardComboBox();
+        // 360px 是量出来的：250px 下 "/root/logviewer-compose　（2 个项目）" 被截成
+        // "/root/logviewer-compose..."，300px 下还差 40px（"（2 个…"），看不到项目数
+        baseDirCombo.setWidth("360px");
+        baseDirCombo.setPlaceholder("切换历史目录");
+        baseDirCombo.setDescription("这台机器上用过的项目根目录，选中即切换并刷新下面的项目列表");
+        baseDirCombo.setItemCaptionGenerator(ComposeBaseDirEntry::caption);
+        row.addComponent(baseDirCombo);
+
+        // 这一行现在有输入框 + 下拉 + 说明三样东西，1280 屏下说明只剩 500px 左右，
+        // 原文案（"…占一个以项目名命名的子目录，compose 文件与 .env 都放里面。"，39 个字）
+        // 会折成两行、顶出 40px 的行高。正文砍到一行，细节挪进 tooltip。
+        Label hint = ComponentFactory.getStandardLabel("每个项目在根目录下占一个以项目名命名的子目录。");
         hint.addStyleName("docker-hint");
+        hint.setDescription(".env 与 compose 文件都放在项目的子目录里；换目录请用输入框或右边的历史目录下拉。");
         row.addComponent(hint);
+        hint.setWidth("100%");
         row.setExpandRatio(hint, 1f);
         return row;
     }
@@ -324,7 +366,14 @@ public class DockerComposeComponent extends CommonComponent {
 
     @Override
     public void initContent() {
-        hostCombo.setItems(loadCandidateHosts());
+        candidateHosts = loadCandidateHosts();
+        // 跳转带过来的主机可能既不在数据库也不在 remoteServerList.conf 里（配置文件刚被改过就是这种），
+        // 补进候选，否则下拉框找不到它会静默回退成"未选择"。
+        if (null != presetHost && null == matchHost(candidateHosts, presetHost)) {
+            candidateHosts.add(presetHost);
+        }
+        hostCombo.setItems(candidateHosts);
+        preference = prefStore.load(currentUser());
     }
 
     @Override
@@ -339,7 +388,52 @@ public class DockerComposeComponent extends CommonComponent {
                 openDetail(e.getItem());
             }
         });
+        // 换主机就换历史目录：同样是 /root/logviewer-compose，两台机器上的内容并不一样
+        hostCombo.addValueChangeListener(e -> refreshBaseDirHistory(true));
+        // 下拉选中即切换目录，已经连着的话顺手把列表刷成新目录下的项目
+        baseDirCombo.addValueChangeListener(e -> {
+            if (updatingBaseDirCombo || null == e.getValue()) {
+                return;
+            }
+            String dir = StrUtil.trimToEmpty(e.getValue().getDir());
+            if (dir.isEmpty() || dir.equals(StrUtil.trimToEmpty(baseDirField.getValue()))) {
+                return;
+            }
+            baseDirField.setValue(dir);
+            if (isCliReady()) {
+                refreshProjects();
+            }
+        });
+        // 默认选中上次用过的那台机器（注册完监听器再设值，让上面的历史目录逻辑跟着走一遍）
+        applyRememberedHost();
         updateActionState();
+    }
+
+    /**
+     * 默认选中上次连过的服务器。
+     * <p>
+     * 从菜单点进来时下拉框原来是空的：一来要重新找机器，二来 {@link #connect()} 会直接
+     * 弹「请先选择目标服务器」。记住上次那台是有意义的 —— 这类页面的使用节奏通常就是
+     * 反复盯同一台机器。只选中、不自动连接：菜单入口不该偷偷建 SSH 通道。
+     */
+    private void applyRememberedHost() {
+        if (null == preference || StrUtil.isBlank(preference.getLastHost())) {
+            return;
+        }
+        ConnectionInfo remembered = matchHost(candidateHosts, preference.getLastHost());
+        if (null == remembered) {
+            return;
+        }
+        if (null != hostCombo.getValue() && remembered.equals(hostCombo.getValue())) {
+            refreshBaseDirHistory(true);
+            return;
+        }
+        hostCombo.setValue(remembered);
+    }
+
+    /** compose 可用（已连上且 CLI 就绪），能发命令了 */
+    private boolean isCliReady() {
+        return null != compose && !executor.isClosed() && null != cliInfo && cliInfo.isInstalled();
     }
 
     /* ------------------------------------------------------------------ */
@@ -388,6 +482,145 @@ public class DockerComposeComponent extends CommonComponent {
     }
 
     /* ------------------------------------------------------------------ */
+    /* 界面偏好：上次用的主机 / 历史项目根目录                                */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * 当前登录用户。取不到（比如组件还没挂到会话上）就退化为 {@code default}：
+     * 偏好是锦上添花的东西，不值得为它抛异常。
+     */
+    private String currentUser() {
+        try {
+            String name = com.so.component.ComponentUtil.getCurrentUserName();
+            return StrUtil.isBlank(name) ? "default" : name.trim();
+        } catch (Exception e) {
+            return "default";
+        }
+    }
+
+    /** 主机键：host:port。带端口是因为同一台机器可能配了不同的 SSH 端口，那是两条独立记录。 */
+    private static String hostKey(ConnectionInfo info) {
+        if (null == info || StrUtil.isBlank(info.getIdHost())) {
+            return null;
+        }
+        String port = StrUtil.isBlank(info.getCdPort()) ? "22" : info.getCdPort().trim();
+        return info.getIdHost().trim() + ":" + port;
+    }
+
+    /** 按 host:port 找候选列表里对应的那一项 */
+    private static ConnectionInfo matchHost(List<ConnectionInfo> list, String key) {
+        if (null == list || StrUtil.isBlank(key)) {
+            return null;
+        }
+        for (ConnectionInfo info : list) {
+            if (key.equals(hostKey(info))) {
+                return info;
+            }
+        }
+        return null;
+    }
+
+    private static ConnectionInfo matchHost(List<ConnectionInfo> list, ConnectionInfo wanted) {
+        return null == wanted ? null : matchHost(list, hostKey(wanted));
+    }
+
+    /**
+     * 刷新「历史目录」下拉框的内容。
+     *
+     * @param fillField 是否顺带把输入框补成该主机最近用过的目录。
+     *                  刚切主机、刚进页面时为 true；项目列表刷完（此时输入框就是真值）时为 false。
+     */
+    private void refreshBaseDirHistory(boolean fillField) {
+        if (null == baseDirCombo) {
+            return;
+        }
+        ConnectionInfo info = hostCombo.getValue();
+        List<ComposeBaseDirEntry> history = (null == info || null == preference)
+                ? new ArrayList<ComposeBaseDirEntry>() : preference.dirsOf(hostKey(info));
+        // 传副本：preference 里的那个 List 后面还会被 rememberDir 改，直接交给 ComboBox 会跟
+        // ListDataProvider 内部状态打架（表现是下拉弹层里少一项或者顺序错乱）
+        updatingBaseDirCombo = true;
+        try {
+            baseDirCombo.setItems(new ArrayList<ComposeBaseDirEntry>(history));
+            baseDirCombo.setValue(null);
+        } finally {
+            updatingBaseDirCombo = false;
+        }
+        if (!fillField || history.isEmpty()) {
+            return;
+        }
+        String current = StrUtil.trimToEmpty(baseDirField.getValue());
+        if (StrUtil.isBlank(current) || null == findDir(history, current)) {
+            baseDirField.setValue(history.get(0).getDir());
+        }
+    }
+
+    private static ComposeBaseDirEntry findDir(List<ComposeBaseDirEntry> list, String dir) {
+        for (ComposeBaseDirEntry entry : list) {
+            if (dir.equals(entry.getDir())) {
+                return entry;
+            }
+        }
+        return null;
+    }
+
+    /** 记下"这台机器 + 这个根目录"，并立刻落库 */
+    private void rememberBaseDir(String host, String dir, int projectCount) {
+        if (null == preference || StrUtil.isBlank(host) || StrUtil.isBlank(dir)) {
+            return;
+        }
+        preference.rememberDir(host, dir, projectCount);
+        prefStore.save(currentUser(), preference);
+    }
+
+    /** 记下"上次用的是这台机器"，并立刻落库 */
+    private void rememberHost(String host) {
+        if (null == preference || StrUtil.isBlank(host)) {
+            return;
+        }
+        preference.setLastHost(host);
+        prefStore.save(currentUser(), preference);
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* 从「免登录服务器列表」跳转过来时的预置主机                              */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * 预置目标主机并自动连接。由服务器的「Compose 管理」按钮调用。
+     * <p>
+     * 连接不在这里发起：拿 bean 的时候组件还没挂到 UI 上，后面后台线程要回头用 UI 渲染。
+     * 这里只记下"要连哪台"，等 {@link #attach()} 之后再动手。
+     */
+    public void setPresetHost(ConnectionInfo info) {
+        this.presetHost = info;
+        this.autoConnectPending = (null != info);
+    }
+
+    @Override
+    public void attach() {
+        super.attach();
+        tryAutoConnect();
+    }
+
+    private void tryAutoConnect() {
+        if (!autoConnectPending || null == presetHost || null == hostCombo || null == candidateHosts) {
+            return;
+        }
+        ConnectionInfo target = matchHost(candidateHosts, presetHost);
+        if (null == target) {
+            target = presetHost;
+            candidateHosts.add(target);
+            hostCombo.setItems(candidateHosts);
+        }
+        // 先落标记再动手：连接失败也不能反复重连，一次就够
+        autoConnectPending = false;
+        // setValue 会触发主机变更监听 → 把输入框补成这台机器上次用的根目录，再拿着它去连
+        hostCombo.setValue(target);
+        connect();
+    }
+
+    /* ------------------------------------------------------------------ */
     /* 连接                                                                */
     /* ------------------------------------------------------------------ */
 
@@ -420,9 +653,15 @@ public class DockerComposeComponent extends CommonComponent {
                             compose = newCompose;
                             cliInfo = cli;
                             setBusy(false, "");
+                            // 连上了才算"用过这台机器"：连接失败不该污染下次的默认选中
+                            rememberHost(hostKey(info));
                             if (StrUtil.isBlank(baseDirField.getValue())) {
                                 baseDirField.setValue(resolvedBaseDir);
                             }
+                            // 先把目录记进历史（项目数未知），这样即便 daemon 没运行、列表刷不出来，
+                            // 这个目录也已经出现在下拉框里了
+                            rememberBaseDir(hostKey(info), baseDirField.getValue().trim(), -1);
+                            refreshBaseDirHistory(false);
                             reloadCliBtn.setEnabled(true);
                             applyDaemonStatus(daemonStatus);
                             if (daemonStatus.isDaemonRunning()) {
@@ -638,6 +877,11 @@ public class DockerComposeComponent extends CommonComponent {
                 envLabel.setValue("已连接 " + executor.hostLabel() + "　docker 命令：`"
                         + executor.getCommandPrefix() + "`　" + (null == cliInfo ? "" : cliInfo.summary())
                         + "　项目根目录：" + baseDir + "　共 " + list.size() + " 个项目（运行中 " + running + "）");
+                // 目录 + 项目数一起记：下拉框里那行「/root/xxx（3 个项目）」就是这么来的。
+                // 放在 done 里（而不是刷新前）是为了记真实查到的数量，失败时不会写进假数据。
+                ConnectionInfo current = hostCombo.getValue();
+                rememberBaseDir(hostKey(current), baseDir, list.size());
+                refreshBaseDirHistory(false);
             }
         });
     }

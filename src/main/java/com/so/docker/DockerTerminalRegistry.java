@@ -21,8 +21,15 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class DockerTerminalRegistry {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(DockerTerminalRegistry.class);
+
     /** 登记表容量上限 */
     private static final int MAX_PENDING = 500;
+
+    /** 通道建不起来时的回调（页面用它把加载遮罩换成失败原因） */
+    public interface FailListener extends java.io.Serializable {
+        void onFail(String message);
+    }
 
     /** token 有效期，6 小时 */
     private static final long TOKEN_TTL_MS = 6 * 60 * 60 * 1000L;
@@ -67,6 +74,19 @@ public final class DockerTerminalRegistry {
         private String composeService = "";
 
         private volatile long expireAt;
+
+        /**
+         * 通道建好之后的回调，由页面在点击「显示日志 / 连接」时注册。
+         * <p>
+         * 存在的理由：iframe 里的 xterm 页面要新建一条 SSH 通道才能出内容，真机上
+         * 这一步十几秒起步，页面得知道"什么时候算连上了"才能把加载遮罩收掉。
+         * <p>
+         * 在 websocket 线程上触发，回调里必须自己切回 UI 线程。
+         * 只在服务端用，不参与序列化；触发一次即清空，避免把已关闭的弹窗一直挂在登记表上。
+         */
+        private transient volatile Runnable readyListener;
+        /** 连接失败回调，参数是可以直接展示给用户的原因 */
+        private transient volatile FailListener failListener;
 
         public Spec(Kind kind, ConnectionInfo info, String dockerCommand, String containerId,
                     String containerName, int tailLines, boolean timestamps, String shell) {
@@ -170,6 +190,46 @@ public final class DockerTerminalRegistry {
 
         public java.util.List<String> getComposeFiles() {
             return composeFiles;
+        }
+
+        /* ---- 加载状态回调（页面用，见 readyListener 的注释） ---- */
+
+        public void setReadyListener(Runnable listener) {
+            this.readyListener = listener;
+        }
+
+        public void setFailListener(FailListener listener) {
+            this.failListener = listener;
+        }
+
+        /** 通道就绪，页面可以撤掉加载遮罩了。重复调用只生效一次 */
+        public void fireReady() {
+            Runnable listener = readyListener;
+            readyListener = null;
+            failListener = null;
+            if (null == listener) {
+                return;
+            }
+            try {
+                listener.run();
+            } catch (RuntimeException e) {
+                log.warn("docker 通道就绪回调出错：{}", e.getMessage());
+            }
+        }
+
+        /** 通道没建起来，把原因交给页面显示（比一直转圈强） */
+        public void fireFail(String message) {
+            FailListener listener = failListener;
+            readyListener = null;
+            failListener = null;
+            if (null == listener) {
+                return;
+            }
+            try {
+                listener.onFail(message);
+            } catch (RuntimeException e) {
+                log.warn("docker 通道失败回调出错：{}", e.getMessage());
+            }
         }
 
         /**

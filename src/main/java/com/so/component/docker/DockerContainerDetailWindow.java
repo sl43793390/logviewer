@@ -24,16 +24,19 @@ import com.vaadin.icons.VaadinIcons;
 import com.vaadin.server.ExternalResource;
 import com.vaadin.server.FileDownloader;
 import com.vaadin.server.StreamResource;
+import com.vaadin.shared.ui.ContentMode;
 import com.vaadin.ui.Alignment;
 import com.vaadin.ui.BrowserFrame;
 import com.vaadin.ui.Button;
 import com.vaadin.ui.CheckBox;
 import com.vaadin.ui.ComboBox;
+import com.vaadin.ui.CssLayout;
 import com.vaadin.ui.Grid;
 import com.vaadin.ui.HorizontalLayout;
 import com.vaadin.ui.Label;
 import com.vaadin.ui.Notification;
 import com.vaadin.ui.Panel;
+import com.vaadin.ui.ProgressBar;
 import com.vaadin.ui.TabSheet;
 import com.vaadin.ui.TextArea;
 import com.vaadin.ui.TextField;
@@ -45,6 +48,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
+import java.io.Serializable;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.FilterInputStream;
@@ -76,6 +80,20 @@ public class DockerContainerDetailWindow extends Window {
     private static final String SHELL_AUTO = "自动探测";
     private static final String TAIL_ALL = "全部";
 
+    private static final String SHOW_LOGS = "显示日志";
+    private static final String RELOAD_LOGS = "重新加载日志";
+    private static final String CONNECT = "连接";
+    private static final String RECONNECT = "重新连接";
+
+    /**
+     * 通道就绪的兜底等待上限。
+     * <p>
+     * iframe 里的页面在自己连上之前对服务端是不可见的，万一它压根没连上
+     * （xterm.js 没加载起来、目标机网络不通），遮罩就会一直转圈 ——
+     * 那和"点了没反应"是同一种体验，所以到点就换成排查提示。
+     */
+    private static final long READY_TIMEOUT_MS = 30000L;
+
     private final DockerContainer container;
     private final DockerService service;
     private final DockerExecutor executor;
@@ -89,13 +107,20 @@ public class DockerContainerDetailWindow extends Window {
     /* 日志 */
     private ComboBox<String> tailCombo;
     private CheckBox timestampsBox;
-    private BrowserFrame logFrame;
+    private Button showLogsBtn;
+    private LoadMask logsMask;
     private String logToken;
+    /** 每次点「显示日志」自增，用来判断异步回调属于哪一次加载（旧回调直接丢弃） */
+    private int logLoadSeq;
+    private boolean logReady;
 
     /* 终端 */
     private ComboBox<String> shellCombo;
-    private BrowserFrame execFrame;
+    private Button connectBtn;
+    private LoadMask consoleMask;
     private String execToken;
+    private int execLoadSeq;
+    private boolean execReady;
     private volatile String detectedShell = "/bin/sh";
 
     /* 监控 */
@@ -188,6 +213,9 @@ public class DockerContainerDetailWindow extends Window {
             monitorThread.interrupt();
             monitorThread = null;
         }
+        // 让还在等超时的看门狗线程失效：它们醒来后会比对序号，比对不上就什么都不做
+        logLoadSeq++;
+        execLoadSeq++;
         // 回收本窗口用掉的两个终端凭证
         DockerTerminalRegistry.release(logToken);
         DockerTerminalRegistry.release(execToken);
@@ -241,8 +269,8 @@ public class DockerContainerDetailWindow extends Window {
                 return;
             }
             // 内网多为 http，navigator.clipboard 不可用，走 Vaadin 自带的剪贴板方案
-            com.vaadin.ui.JavaScript.eval("window.__dockerCopy=" + com.alibaba.fastjson2.JSON.toJSONString(text) + ";");
-            JavaScriptHelper.copy("__dockerCopy");
+            DockerUi.copyToClipboard(text);
+            Notification.show("已复制到剪贴板", Notification.Type.HUMANIZED_MESSAGE);
         });
 
         loadInspect();
@@ -289,26 +317,29 @@ public class DockerContainerDetailWindow extends Window {
 
         timestampsBox = new CheckBox("显示时间戳");
 
-        Button apply = ComponentFactory.getStandardButton("重新加载");
-        apply.setWidth("100px");
+        // 不再打开页签就自动加载：日志要新开一条 SSH 通道，真机上十几秒才出内容，
+        // 期间 iframe 里是纯黑的一片 —— 用户会以为按钮没生效。改成显式点一次，
+        // 期间用圆形的等待进度条遮住 iframe。
+        showLogsBtn = ComponentFactory.getPrimaryButtonWithType(SHOW_LOGS, com.so.component.util.ButtonType.PRIMARY);
+        showLogsBtn.setWidth("130px");
         Button download = ComponentFactory.getStandardButton("下载日志");
         download.setWidth("100px");
-        Button scrollTop = ComponentFactory.getStandardButton("清屏");
-        scrollTop.setWidth("80px");
 
         Label hint = ComponentFactory.getStandardLabel(
-                "实时跟踪 docker logs -f；只读视图，搜索用 Ctrl+F，导出整个缓冲区用终端工具栏的「导出」。");
+                "点「显示日志」后开始实时跟踪 docker logs -f（首次连接要新建 SSH 通道，十几秒属正常）。"
+                        + "只读视图，搜索用 Ctrl+F，导出整个缓冲区用终端工具栏的「导出」。");
         hint.addStyleName("docker-hint");
 
-        bar.addComponents(tailCombo, ComponentFactory.getStandardLabel("显示末"), timestampsBox, apply, download);
+        bar.addComponents(tailCombo, ComponentFactory.getStandardLabel("显示末"), timestampsBox, showLogsBtn, download);
         root.addComponent(bar);
         root.addComponent(hint);
 
-        logFrame = new BrowserFrame();
-        logFrame.setSizeFull();
-        logFrame.addStyleName("docker-term-frame");
-        root.addComponent(logFrame);
-        root.setExpandRatio(logFrame, 1f);
+        logsMask = new LoadMask();
+        logsMask.setIdle("点击上方「" + SHOW_LOGS + "」按钮开始加载容器日志。<br/>"
+                + "首次连接要在目标机上新建一条 SSH 通道，通常要十几秒，进度圈转完就会出现日志。<br/>"
+                + "容器本身没有新日志时窗口是空的，属正常现象。");
+        root.addComponent(logsMask.getHost());
+        root.setExpandRatio(logsMask.getHost(), 1f);
 
         // 下载走 StreamResource：真机上日志可能有几十万行，比在浏览器里拼字符串可靠
         StreamResource resource = new StreamResource(new LogStreamSource(), "container-" + container.getName() + ".log");
@@ -316,16 +347,22 @@ public class DockerContainerDetailWindow extends Window {
         FileDownloader downloader = new FileDownloader(resource);
         downloader.extend(download);
 
-        apply.addClickListener(e -> reloadLogFrame());
-        scrollTop.addClickListener(e -> reloadLogFrame());
-
-        reloadLogFrame();
+        showLogsBtn.addClickListener(e -> reloadLogFrame());
         return root;
     }
 
     private void reloadLogFrame() {
+        if (null == logsMask) {
+            return;
+        }
+        final int seq = ++logLoadSeq;
+        logReady = false;
+        showLogsBtn.setEnabled(false);
+        logsMask.setBusy("正在连接 " + cn.hutool.http.HtmlUtil.escape(executor.hostLabel()) + " 并拉取日志…<br/>"
+                + "首次连接要新建 SSH 通道，请稍候（十几秒属正常）。");
+
         DockerTerminalRegistry.release(logToken);
-        DockerTerminalRegistry.Spec spec = new DockerTerminalRegistry.Spec(
+        final DockerTerminalRegistry.Spec spec = new DockerTerminalRegistry.Spec(
                 DockerTerminalRegistry.Kind.LOGS,
                 executor.getInfo(),
                 executor.getCommandPrefix(),
@@ -334,9 +371,12 @@ public class DockerContainerDetailWindow extends Window {
                 parseTail(),
                 Boolean.TRUE.equals(timestampsBox.getValue()),
                 null);
+        // 监听器要在登记之前挂好：websocket 那头的握手随时可能回来
+        bindLoadCallbacks(spec, true, seq);
         logToken = DockerTerminalRegistry.register(spec);
+        watchReadyTimeout(true, seq);
         // ro=1 只读、eol=1 把 LF 当 CRLF：docker logs 没有 tty，输出只有 \n
-        logFrame.setSource(new ExternalResource(TERMINAL_PAGE + "?ws=/ws/docker&ro=1&eol=1&token=" + logToken));
+        logsMask.load(TERMINAL_PAGE + "?ws=/ws/docker&ro=1&eol=1&token=" + logToken);
     }
 
     private int parseTail() {
@@ -396,33 +436,47 @@ public class DockerContainerDetailWindow extends Window {
         shellCombo.setWidth("180px");
         shellCombo.setTextInputAllowed(false);
         shellCombo.setEmptySelectionAllowed(false);
-        Button reopen = ComponentFactory.getStandardButton("重开会话");
-        reopen.setWidth("100px");
-        bar.addComponents(shellCombo, reopen);
+        // 与日志页签同样的道理：docker exec -it 也要现开一条带 pty 的 SSH 通道，
+        // 打开页签就自动连接只会让人对着黑屏等十几秒。改成点「连接」再连。
+        connectBtn = ComponentFactory.getPrimaryButtonWithType(CONNECT, com.so.component.util.ButtonType.PRIMARY);
+        connectBtn.setWidth("110px");
+        bar.addComponents(shellCombo, connectBtn);
         Label hint = ComponentFactory.getStandardLabel(
-                "等价于 ssh 到宿主机后执行 docker exec -it <容器> <shell>；退出该 shell 后本会话即结束。");
+                "点「连接」后进入容器终端（等价于 ssh 到宿主机执行 docker exec -it <容器> <shell>，"
+                        + "首次连接要十几秒）；退出该 shell 后本会话即结束。");
         hint.addStyleName("docker-hint");
         root.addComponent(bar);
         root.addComponent(hint);
 
-        execFrame = new BrowserFrame();
-        execFrame.setSizeFull();
-        execFrame.addStyleName("docker-term-frame");
-        root.addComponent(execFrame);
-        root.setExpandRatio(execFrame, 1f);
+        consoleMask = new LoadMask();
+        consoleMask.setIdle("点击上方「" + CONNECT + "」按钮进入容器终端。<br/>"
+                + "等价于在宿主机上执行 docker exec -it，首次连接要在目标机上新建一条带 pty 的 SSH 通道，<br/>"
+                + "通常要十几秒，进度圈转完就会进入容器。");
+        root.addComponent(consoleMask.getHost());
+        root.setExpandRatio(consoleMask.getHost(), 1f);
 
-        reopen.addClickListener(e -> reloadExecFrame());
-        shellCombo.addValueChangeListener(e -> reloadExecFrame());
-        reloadExecFrame();
+        connectBtn.addClickListener(e -> reloadExecFrame());
+        shellCombo.addValueChangeListener(e -> {
+            // 还没连过时换 shell 只是改个选择，不用去建通道
+            if (execReady) {
+                reloadExecFrame();
+            }
+        });
         return root;
     }
 
     private void reloadExecFrame() {
-        if (null == execFrame) {
+        if (null == consoleMask) {
             return;
         }
+        final int seq = ++execLoadSeq;
+        execReady = false;
+        connectBtn.setEnabled(false);
+        consoleMask.setBusy("正在进入容器 " + cn.hutool.http.HtmlUtil.escape(container.getName()) + "…<br/>"
+                + "首次连接要在目标机上新建一条带 pty 的 SSH 通道，请稍候（十几秒属正常）。");
+
         DockerTerminalRegistry.release(execToken);
-        DockerTerminalRegistry.Spec spec = new DockerTerminalRegistry.Spec(
+        final DockerTerminalRegistry.Spec spec = new DockerTerminalRegistry.Spec(
                 DockerTerminalRegistry.Kind.EXEC,
                 executor.getInfo(),
                 executor.getCommandPrefix(),
@@ -431,9 +485,194 @@ public class DockerContainerDetailWindow extends Window {
                 -1,
                 false,
                 resolveShell());
+        bindLoadCallbacks(spec, false, seq);
         execToken = DockerTerminalRegistry.register(spec);
+        watchReadyTimeout(false, seq);
         // 交互终端需要 tty，服务端用 shell 通道 + pty，所以不能用 eol 模式
-        execFrame.setSource(new ExternalResource(TERMINAL_PAGE + "?ws=/ws/docker&token=" + execToken));
+        consoleMask.load(TERMINAL_PAGE + "?ws=/ws/docker&token=" + execToken);
+    }
+
+    /* ================================================================== */
+    /* 加载遮罩：iframe 里的 xterm 页面连上之前，别让用户对着黑屏等         */
+    /* ================================================================== */
+
+    /** 给一次加载挂上「连上了 / 没连上」两个回调 */
+    private void bindLoadCallbacks(final DockerTerminalRegistry.Spec spec, final boolean logsTab, final int seq) {
+        spec.setReadyListener(new Runnable() {
+            @Override
+            public void run() {
+                onChannelReady(logsTab, seq);
+            }
+        });
+        spec.setFailListener(new DockerTerminalRegistry.FailListener() {
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            public void onFail(String message) {
+                onChannelFailed(logsTab, seq, message);
+            }
+        });
+    }
+
+    /** websocket 线程回调，切回 UI 线程再动界面 */
+    private void onChannelReady(final boolean logsTab, final int seq) {
+        safeAccess(new Runnable() {
+            @Override
+            public void run() {
+                if (logsTab) {
+                    if (seq != logLoadSeq || null == logsMask) {
+                        return;
+                    }
+                    logReady = true;
+                    logsMask.hide();
+                    showLogsBtn.setCaption(RELOAD_LOGS);
+                    showLogsBtn.setEnabled(true);
+                } else {
+                    if (seq != execLoadSeq || null == consoleMask) {
+                        return;
+                    }
+                    execReady = true;
+                    consoleMask.hide();
+                    connectBtn.setCaption(RECONNECT);
+                    connectBtn.setEnabled(true);
+                }
+            }
+        });
+    }
+
+    private void onChannelFailed(final boolean logsTab, final int seq, final String message) {
+        safeAccess(new Runnable() {
+            @Override
+            public void run() {
+                // 遮罩文字走 ContentMode.HTML，而 message 是 SSH 异常原文（远端可控），必须转义
+                String text = "连接失败：" + cn.hutool.http.HtmlUtil.escape(StrUtil.emptyToDefault(message, "未知原因"))
+                        + "<br/>可以再点一次重试。";
+                if (logsTab) {
+                    if (seq != logLoadSeq || null == logsMask) {
+                        return;
+                    }
+                    logsMask.setIdle(text);
+                    showLogsBtn.setEnabled(true);
+                } else {
+                    if (seq != execLoadSeq || null == consoleMask) {
+                        return;
+                    }
+                    consoleMask.setIdle(text);
+                    connectBtn.setEnabled(true);
+                }
+            }
+        });
+    }
+
+    /** 到点还没收到「已连上」就把遮罩文案换成排查提示，别让它一直转圈 */
+    private void watchReadyTimeout(final boolean logsTab, final int seq) {
+        Thread thread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Thread.sleep(READY_TIMEOUT_MS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                safeAccess(new Runnable() {
+                    @Override
+                    public void run() {
+                        String text = "等了 " + (READY_TIMEOUT_MS / 1000) + " 秒还没连上："
+                                + "目标机可能网络较慢，或 docker 没有响应。<br/>"
+                                + "可以再点一次上面的按钮重试；若一直连不上，"
+                                + "请先到「SSH 管理」确认这台机器能正常登录。";
+                        if (logsTab) {
+                            if (seq != logLoadSeq || logReady || null == logsMask) {
+                                return;
+                            }
+                            logsMask.setIdle(text);
+                            showLogsBtn.setEnabled(true);
+                        } else {
+                            if (seq != execLoadSeq || execReady || null == consoleMask) {
+                                return;
+                            }
+                            consoleMask.setIdle(text);
+                            connectBtn.setEnabled(true);
+                        }
+                    }
+                });
+            }
+        }, "docker-term-watchdog");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    /**
+     * iframe + 加载遮罩。
+     * <p>
+     * 遮罩是<b>盖</b>在 iframe 上的，不是把 iframe 藏起来：{@code setVisible(false)}
+     * 会让 Vaadin 把 iframe 从 DOM 里摘掉，websocket 根本不会发起，那就永远连不上了。
+     * 所以两者都绝对定位铺满同一个容器，收到「通道就绪」回调后再把遮罩移除。
+     */
+    private class LoadMask implements Serializable {
+
+        private static final long serialVersionUID = 1L;
+
+        private final CssLayout host = new CssLayout();
+        private final BrowserFrame frame = new BrowserFrame();
+        private final CssLayout mask = new CssLayout();
+        private final CssLayout maskInner = new CssLayout();
+        private final Label maskText = new Label();
+        private final ProgressBar busy = new ProgressBar();
+
+        LoadMask() {
+            host.setSizeFull();
+            host.addStyleName("docker-term-host");
+
+            frame.setSizeFull();
+            frame.addStyleName("docker-term-frame");
+
+            // 不确定态的 ProgressBar 在 Valo 主题里就是一个旋转的圆圈，
+            // 尺寸由主题的 !important 规则决定，这里不要设宽高（设了会被 !important 压回去，
+            // 反而变成 240x12 的椭圆）
+            busy.setIndeterminate(true);
+            busy.addStyleName("docker-load-bar");
+            busy.setVisible(false);
+
+            maskText.setContentMode(ContentMode.HTML);
+            maskText.addStyleName("docker-term-mask-text");
+            maskText.setWidth("100%");
+
+            maskInner.addStyleName("docker-term-mask-inner");
+            maskInner.addComponents(maskText, busy);
+
+            mask.addStyleName("docker-term-mask");
+            mask.addComponent(maskInner);
+
+            host.addComponents(frame, mask);
+        }
+
+        CssLayout getHost() {
+            return host;
+        }
+
+        /** 还没开始加载 / 加载完但需要提示：只有文字 */
+        void setIdle(String html) {
+            busy.setVisible(false);
+            maskText.setValue(StrUtil.emptyToDefault(html, ""));
+            mask.setVisible(true);
+        }
+
+        /** 正在加载：文字 + 圆形等待进度条 */
+        void setBusy(String html) {
+            maskText.setValue(StrUtil.emptyToDefault(html, ""));
+            busy.setVisible(true);
+            mask.setVisible(true);
+        }
+
+        void hide() {
+            mask.setVisible(false);
+        }
+
+        void load(String url) {
+            frame.setSource(new ExternalResource(url));
+        }
     }
 
     private String resolveShell() {
@@ -863,16 +1102,4 @@ public class DockerContainerDetailWindow extends Window {
         return layout;
     }
 
-    /** 剪贴板辅助：内网 http 下 navigator.clipboard 不可用，退回 execCommand */
-    private static final class JavaScriptHelper {
-
-        static void copy(String globalVar) {
-            com.vaadin.ui.JavaScript.eval("(function(){var t=window['" + globalVar + "'];"
-                    + "if(!t){return;}var a=document.createElement('textarea');a.value=t;"
-                    + "a.style.position='fixed';a.style.top='-1000px';document.body.appendChild(a);"
-                    + "a.select();try{document.execCommand('copy');}catch(e){}"
-                    + "document.body.removeChild(a);})();");
-            Notification.show("已复制到剪贴板", Notification.Type.HUMANIZED_MESSAGE);
-        }
-    }
 }

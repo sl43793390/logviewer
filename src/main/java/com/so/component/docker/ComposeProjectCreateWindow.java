@@ -210,10 +210,15 @@ public class ComposeProjectCreateWindow extends Window {
         templateRow.setExpandRatio(templateDesc, 1f);
         root.addComponent(templateRow);
 
-        templateCombo.addValueChangeListener(e -> {
-            ComposeTemplate template = ComposeTemplates.byName(e.getValue());
+        // 模板说明：建完就把当前项的说明填上。
+        // 原来只在 ValueChangeListener 里赋值，而初始值是用 setValue 设的（那时监听器还没挂上），
+        // 所以打开窗口后「套用」按钮右边一直是一块空白，用户看不出这个模板是干什么的。
+        Runnable refreshTemplateDesc = () -> {
+            ComposeTemplate template = ComposeTemplates.byName(templateCombo.getValue());
             templateDesc.setValue(null == template ? "" : template.getDescription());
-        });
+        };
+        templateCombo.addValueChangeListener(e -> refreshTemplateDesc.run());
+        refreshTemplateDesc.run();
 
         // 上传
         HorizontalLayout uploadRow = new HorizontalLayout();
@@ -225,7 +230,8 @@ public class ComposeProjectCreateWindow extends Window {
         upload.setHeight("30px");
         upload.addSucceededListener(receiver);
         Label uploadHint = ComponentFactory.getStandardLabel(
-                "上传的文件内容会填进当前选中的 compose 文件里（不会直接传到服务器），确认后再点创建。");
+                "上传的文件内容会填进基础文件 " + ComposeService.DEFAULT_FILE
+                        + " 里（不会直接传到服务器），确认后再点创建；要叠加文件请在「2. compose 文件」里新增。");
         uploadHint.addStyleName("docker-hint");
         uploadRow.addComponents(upload, uploadHint);
         uploadRow.setExpandRatio(uploadHint, 1f);
@@ -313,7 +319,7 @@ public class ComposeProjectCreateWindow extends Window {
         hint.setWidth("100%");
         root.addComponent(hint);
 
-        editor = new ComposeYamlEditor("", "630px");
+        editor = new ComposeYamlEditor("", "100%");
         root.addComponent(editor);
         root.setExpandRatio(editor, 1f);
 
@@ -406,7 +412,7 @@ public class ComposeProjectCreateWindow extends Window {
 
         envArea = ComponentFactory.getTextArea();
         envArea.setSizeFull();
-        envArea.setHeight("480px");
+        envArea.setHeight("680px");
         envArea.addStyleName("docker-inspect-area");
         // 默认的 LAZY 模式要等失焦才回传，改完 .env 想看变量检查结果得点别处一下；
         // 500ms 的间隔足够「停下来时自动更新」，又不会每敲一个键发一次请求
@@ -420,7 +426,8 @@ public class ComposeProjectCreateWindow extends Window {
         root.setExpandRatio(envArea, 1f);
 
         varLabel = ComponentFactory.getStandardLabel("");
-        varLabel.addStyleName("compose-warn-label");
+        // 告警底色由 refreshVarCheck 按「有没有缺值的变量」动态加，
+        // 不能在这里写死：写死的话"变量都齐了"也会显示成一条橙色警告
         varLabel.setWidth("100%");
         root.addComponent(varLabel);
         envArea.addValueChangeListener(e -> refreshVarCheck());
@@ -457,6 +464,11 @@ public class ComposeProjectCreateWindow extends Window {
         } else {
             sb.append("，其中 ").append(missing.size()).append(" 个既没写默认值、.env 里也没有：")
                     .append(StrUtil.join(", ", missing));
+        }
+        // 只有真缺值才挂告警底色，正常情况保持中性
+        varLabel.removeStyleName("compose-warn-label");
+        if (!missing.isEmpty()) {
+            varLabel.addStyleName("compose-warn-label");
         }
         varLabel.setValue(sb.toString());
     }
@@ -530,10 +542,15 @@ public class ComposeProjectCreateWindow extends Window {
                     public void done(ComposeService.ExecOutcome outcome) {
                         owner.setBusy(false, "");
                         if (outcome.isOk()) {
+                            String warnings = StrUtil.trimToEmpty(outcome.getStderr());
+                            // 警告不塞进标题：compose 的告警经常三五条，标题会被撑成一整行；
+                            // 统一挂在配置正文下方，跟详情窗口的「校验并预览」保持一致
                             resultLabel.setValue("✓ 校验通过，下面是变量替换后的最终配置"
-                                    + (StrUtil.isBlank(outcome.getStderr()) ? ""
-                                    : "（compose 警告：" + outcome.getStderr().trim() + "）"));
-                            resultArea.setValue(outcome.getStdout());
+                                    + (warnings.isEmpty() ? ""
+                                    : "（另有 " + warnings.split("\\R").length + " 条 compose 警告，附在下面）"));
+                            resultArea.setValue(warnings.isEmpty()
+                                    ? outcome.getStdout()
+                                    : outcome.getStdout() + "\n\n--- compose 警告 ---\n" + warnings);
                         } else {
                             resultLabel.addStyleName("compose-warn-label");
                             resultLabel.setValue("✗ 校验失败（退出码 " + outcome.getExitCode() + "）");
@@ -703,6 +720,13 @@ public class ComposeProjectCreateWindow extends Window {
         if (null == template) {
             return;
         }
+        // 先把「当前文件」指针摘掉，必须在 envArea.setValue 之前。
+        // setValue 会当场触发 envArea 的 ValueChangeListener -> refreshVarCheck -> stashCurrent，
+        // 而 stashCurrent 是把「编辑器里的内容」写回 drafts —— 那一刻编辑器里还是旧内容，
+        // 于是刚写进 drafts 的模板 YAML 立刻被旧内容覆盖：表现就是套用模板后第 2 步的文件
+        // 还是老样子（新建窗口里默认的 MySQL 8 模板永远显示成空白骨架），而项目名和 .env 却是新模板的。
+        // currentFile 为 null 时 stashCurrent 是空操作，冲突自然消失。
+        currentFile = null;
         if (!drafts.containsKey(ComposeService.DEFAULT_FILE)) {
             drafts.clear();
             drafts.put(ComposeService.DEFAULT_FILE, "");
@@ -711,7 +735,6 @@ public class ComposeProjectCreateWindow extends Window {
         if (StrUtil.isNotBlank(template.getEnv())) {
             envArea.setValue(template.getEnv());
         }
-        currentFile = null;
         fileCombo.setItems(new ArrayList<String>(drafts.keySet()));
         fileCombo.setValue(ComposeService.DEFAULT_FILE);
         switchFile(ComposeService.DEFAULT_FILE);
@@ -756,7 +779,8 @@ public class ComposeProjectCreateWindow extends Window {
             fileCombo.setValue(ComposeService.DEFAULT_FILE);
             switchFile(ComposeService.DEFAULT_FILE);
             refreshVarCheck();
-            Notification.show("已载入 " + fileName + "（" + text.split("\n").length + " 行）",
+            Notification.show("已载入 " + fileName + "（" + text.split("\n").length + " 行）→ 写入 "
+                            + ComposeService.DEFAULT_FILE,
                     Notification.Type.HUMANIZED_MESSAGE);
         }
     }

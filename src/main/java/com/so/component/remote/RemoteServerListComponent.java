@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.so.component.CommonComponent;
 import com.so.component.ComponentUtil;
 import com.so.component.RemoteSSHComponent;
+import com.so.component.docker.DockerComposeComponent;
 import com.so.component.docker.DockerMgmtComponent;
 import com.so.component.util.FileUploader;
 import com.so.component.util.TabSheetUtil;
@@ -135,6 +136,14 @@ public class RemoteServerListComponent extends CommonComponent {
 			dockerBtn.addClickListener(e ->{
 				addDockerMgmtTab(info);
 			});
+			// 同理，compose 单独一个入口。两个页面共用一个 DockerExecutor 的建连流程，
+			// 但各自管各自的 tab：compose 页要选项目根目录，跟容器/镜像不是一套操作。
+			Button composeBtn = ComponentFactory.getStandardButton("Compose 管理");
+			composeBtn.setWidth("135px");
+			composeBtn.setData(info);
+			composeBtn.addClickListener(e ->{
+				addComposeTab(info);
+			});
 			Button fileBtn = ComponentFactory.getStandardButton("文件管理");
 			fileBtn.setData(info);
 			fileBtn.addClickListener(e ->{
@@ -150,10 +159,11 @@ public class RemoteServerListComponent extends CommonComponent {
 			abs.addComponent(manageBtn,"left:150px;");
 			abs.addComponent(sshBtn,"left:276px;");
 			abs.addComponent(dockerBtn,"left:399px;");
-			abs.addComponent(fileBtn,"left:573px;");
-			abs.addComponent(monitorBtn,"left:699px;");
-			abs.addComponent(deleteBtn,"left:825px;");
-			abs.addComponent(descLb,"left:915px;");
+			abs.addComponent(composeBtn,"left:573px;");
+			abs.addComponent(fileBtn,"left:725px;");
+			abs.addComponent(monitorBtn,"left:851px;");
+			abs.addComponent(deleteBtn,"left:977px;");
+			abs.addComponent(descLb,"left:1067px;");
 			if (i == serverListFromDb.size()-1) {
 				serverLayout.setExpandRatio(abs, 1);
 			}
@@ -235,6 +245,28 @@ public class RemoteServerListComponent extends CommonComponent {
 			return;
 		}
 		DockerMgmtComponent bean = ComponentUtil.applicationContext.getBean(DockerMgmtComponent.class);
+		bean.setPresetHost(data);
+		bean.initLayout();
+		bean.initContent();
+		bean.registerHandler();
+		TabSheetUtil.getMainTabsheet().addTab(bean, caption).setClosable(true);
+		TabSheetUtil.getMainTabsheet().setSelectedTab(bean);
+	}
+
+	/**
+	 * 跳到 docker-compose 项目管理页（{@code docker.DockerComposeComponent}），
+	 * 预置这一行的机器并自动连接。
+	 * <p>
+	 * 与 {@link #addDockerMgmtTab(ConnectionInfo)} 同样的规则：每个 tab 独占一条 SSH 通道，
+	 * 同一台机器重复点只切回已开的那个 tab。
+	 */
+	private void addComposeTab(ConnectionInfo data) {
+		String caption = "Compose-" + data.getIdHost();
+		if (TabSheetUtil.checkComponent(caption)) {
+			TabSheetUtil.navigateTo(caption);
+			return;
+		}
+		DockerComposeComponent bean = ComponentUtil.applicationContext.getBean(DockerComposeComponent.class);
 		bean.setPresetHost(data);
 		bean.initLayout();
 		bean.initContent();
