@@ -1,11 +1,16 @@
 # logviewer
 
+## 当前项目已经停止维护，请移步新项目：https://github.com/sl43793390/lanyue
+
+### 新项目使用全新的框架：jdk21 + vaadin24 + spring-boot3.5 打造，功能更加强大，欢饮试用
+
 > 一个部署在服务器上的 **Web 端日志查看 / 文件管理 / 应用发布** 工具。
 > 运维或管理员预先配好机器与账号，开发人员只需打开浏览器，就能查看、搜索和下载集群里各台服务器的日志文件，无需拿到 Linux 登录凭据。
 
 - 技术栈：Vaadin 8 + Spring Boot（内嵌 Tomcat，打 **jar** 包）
 - 访问方式：`http://<ip>:9095/log/`
 - 默认账号：`admin / admin`（首次登录后请及时修改）
+- 内置 **Docker 管理**：复用服务器凭据走 SSH + `docker` 命令行，直接管理容器 / 镜像 / 数据卷 / 网络，**不需要在目标机上把 docker daemon 的 2375 端口暴露出来**。
 
 ## 目录
 
@@ -24,7 +29,7 @@
 
 - 服务器数量不多的场景下，无需额外搭建日志采集、推送或日志平台，把这一个 jar 丢到任意一台机器上就能通过浏览器查看所有授权服务器的日志和其他文件。
 - 需要查看日志的 Linux 账号密码不必交给开发人员，管理员在页面里配好机器即可，降低账号外泄风险。
-- 顺带把 **jar 包管理 / Tomcat 管理 / 通用应用管理** 做成了页面操作，上传、启停、看状态、看日志都在一个界面里完成。
+- 顺带把 **jar 包管理 / Tomcat 管理 / 通用应用管理**webssh docker/docker compose 管理等 做成了页面操作，上传、启停、看状态、看日志都在一个界面里完成。
 
 ## 功能清单
 
@@ -39,6 +44,12 @@
 | | 免登录服务器列表 | 管理远程连接，一键打开「应用管理」「SSH 终端」「文件管理」 |
 | | 远程应用管理 | 在远程机器上管理 jar / Tomcat / 通用项目（与本地同类功能一致） |
 | | Web SSH 终端 | 基于 xterm.js 的完整终端，支持 vim / top / tmux、256 色、搜索与会话导出 |
+| Docker 管理 | 容器管理 | 列表（运行中 / 已停止 / 全部）、启停 / 重启 / 暂停、批量删除、创建容器（端口 / 环境变量 / 卷 / 网络 / 重启策略）；详情（inspect 可视化）、实时日志（可下载 / 搜索）、Web 终端（`docker exec`）、CPU / 内存 / 网络曲线、容器内文件浏览与上传下载 |
+| | 镜像管理 | 本地列表、拉取（可指定 registry）、构建（上传 Dockerfile 或从 Git 构建）、导出下载、导入、删除、清理悬空镜像 |
+| | 数据卷管理 | 列表（含挂载它的容器）、创建、删除、清理未使用卷 |
+| | 网络管理 | 列表（含子网 / 网关 / 接入容器）、创建、删除、连接与断开容器 |
+| | 系统信息 | Docker / API / 客户端版本、引擎信息、磁盘占用（`system df`）、一键清理，以及 Rocky / Ubuntu 环境自检 |
+| | Docker-Compose 管理 | 菜单已预留，功能开发中 |
 | 其他工具 | 加密工具 | 密码摘要等小工具 |
 | 用户管理 | 用户管理 | 新增 / 修改 / 删除用户，按 `ADD / UPDATE / DELETE / UPLOAD` 分配权限 |
 
@@ -107,6 +118,7 @@ http://<ip>:9095/log/
 ### 4. 兼容性
 
 - 不支持 CentOS 6.x，开发与验证环境为 CentOS 7.9。
+- Docker 管理按 **Rocky Linux 8/9/10、Ubuntu 22.04** 优先适配，同时兼容 **CentOS 7**（含系统仓库自带的 docker 1.13、只有 init 脚本的机器，以及没有 systemd 的容器环境）。
 
 ## 配置说明
 
@@ -196,7 +208,9 @@ spring.datasource.driver-class-name=org.sqlite.JDBC
 远程应用管理
 ├── 远程日志搜索
 └── 免登录服务器列表       ← 从这里进入远程机器：应用管理 / SSH 终端 / 文件管理
-Docker管理                 （预留）
+Docker管理
+├── Docker管理             ← 选目标服务器后管理容器 / 镜像 / 数据卷 / 网络 / 系统信息
+└── Docker-Compose管理      （预留，功能开发中）
 安全管理                   （预留）
 其他工具
 └── 加密工具
@@ -209,6 +223,27 @@ Docker管理                 （预留）
 1. **管理员**先在「免登录服务器列表」里把要运维的机器加进去（或直接编辑 `remoteServerList.conf`）。
 2. **开发人员**登录后打开「远程日志搜索」，选择机器 → 输入日志目录 → 搜索 → 预览或下载。
 3. 需要发布时用「本地应用管理 / 远程应用管理」上传 jar 或 war，点「启动服务」，再回到日志搜索查看输出。
+
+### Docker 管理
+
+Docker 管理走的是 **SSH + `docker` 命令行**，不是 Docker Remote API。原因是内网的 docker daemon 通常只监听 `unix:///var/run/docker.sock`，要让它接受远程调用就得开 TCP 端口，等于把一台能起特权容器的机器暴露在网络上；而本项目已经有成套的 SSH 连接体系，直接复用更省事也更安全。
+
+#### 使用方式
+
+1. 进入「Docker管理 → Docker管理」，在顶部下拉框选一台**已经在「免登录服务器列表」里配置好的机器**。
+2. `docker 命令` 一栏留空即自动探测（依次尝试 `docker`、`/usr/bin/docker`、`/usr/local/bin/docker`、`/snap/bin/docker`）；非 root 用户会自动降级成 `sudo -n docker`。要手工指定就按 `sudo -n docker` 这种形式填。
+3. 点「连接」。连接成功后下方会出现容器 / 镜像 / 数据卷 / 网络 / 系统信息五个子页。
+
+#### 权限要求
+
+登录用户在目标机上必须能执行 docker，二选一：
+
+- 把用户加进 `docker` 组：`usermod -aG docker <用户>`（**重新登录后生效**，加完立刻试会仍然是 permission denied）；
+- 或者给该用户配免密 sudo：在 `/etc/sudoers.d/` 下写一条 `<用户> ALL=(ALL) NOPASSWD: /usr/bin/docker`。
+
+> 用 `sudo -n`（non-interactive）是刻意的：SSH 通道上没有交互终端，一旦 sudo 要密码就会直接失败。所以要么配 NOPASSWD，要么进 docker 组。
+
+#### 目标机器环境要求（Rocky Linux / Ubuntu）
 
 ### jar 项目的启动方式（优先级从高到低）
 
@@ -234,8 +269,10 @@ src/main/java/com/so
 │   ├── UserManagementComponent.java   # 用户管理
 │   ├── management/            # 本地：文件管理、jar、Tomcat、通用项目、使用说明
 │   ├── remote/                # 远程：登录、服务器列表、应用管理、SSH 终端、文件管理
+│   ├── docker/                # Docker：主页面 + 容器 / 镜像 / 数据卷 / 网络 / 系统信息子页 + 「Docker 不可用」提示窗
 │   └── util/                  # 上传器、弹窗、TabSheet 工具等
 ├── config/                    # BeansConfig：数据源与 SqlSessionFactory
+├── docker/                    # Docker 命令执行器（含 daemon/服务管理方式探测与启动）、服务层与数据模型（不依赖 Spring 容器）
 ├── controller/                # SshHandler（WebSocket）、FileUploadController 等
 ├── entity/ mapper/ service/   # 实体、Mapper、服务
 ├── ui/                        # MyUI、LoginView、LogCheckView、ComponentFactory
@@ -360,6 +397,9 @@ src/main/java/com/so
 **9. 上传大文件失败**
 上传会先落到 Web 服务器本地磁盘再转发到目标机器（远程场景），确保 Web 服务器和目标磁盘都有足够空间。
 
+**10. 连上服务器后提示「Docker 服务未运行」或「目标机未安装 Docker」**
+这是探测结果，不是报错：目标机上没有可用的 docker daemon，页面已经**停止发送**所有 docker 命令。按窗口里的提示操作即可 —— 没装就照对应发行版的命令装（CentOS 7 / Rocky / Ubuntu 各有一份），装了但没启动就点「启动 Docker 服务」（需要 `root` 或免密 `sudo`）。启动失败时窗口下方的报告里有 `systemctl is-active` 与 `journalctl -u docker` 的日志，常见原因是 `/etc/docker/daemon.json` 配置有误、存储驱动不匹配、或 SELinux 拦了。自己在服务器上把 docker 起起来之后，回到页面点「检测服务状态」刷新即可。
+
 ## 截图
 
 <img width="900px" alt="登录页" src="images/login.png"/>
@@ -376,7 +416,8 @@ src/main/java/com/so
 - 安全管理页面：列出当前监听端口、协议、策略、允许 IP 与备注，支持配置 IP 白名单。
 - 日志预览支持大文件（当前按行分页读取，超大文件仍建议直接下载）。
 - 日志编码自动识别、按日志级别过滤。
-- Docker 管理、定时任务页面（菜单已预留）。
+- Docker-Compose 管理（菜单已预留）：compose 项目列表与状态、项目启停 / 重建、项目日志聚合、在线编辑 `docker-compose.yml`。
+- 定时任务页面（菜单已预留）。
 
 ---
 
